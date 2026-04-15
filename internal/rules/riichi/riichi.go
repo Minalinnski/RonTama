@@ -78,6 +78,50 @@ func (r Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bo
 	return res.Han > 0 || len(res.Yakuman) > 0
 }
 
+// Settle implements the standard Riichi payment matrix.
+//
+//	dealer ron     → discarder pays base × 6
+//	non-dealer ron → discarder pays base × 4
+//	dealer tsumo   → each of 3 non-dealers pays base × 2
+//	non-dealer tsumo → dealer pays base × 2; the two other non-dealers each pay base × 1
+//
+// Each payment is rounded up to the next 100.
+func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, _ [4]bool) [4]int {
+	var d [4]int
+	base := score.BasePts
+	dealerWin := winner == dealer
+	if ctx.Tsumo {
+		for i := 0; i < 4; i++ {
+			if i == winner {
+				continue
+			}
+			mult := 1
+			if dealerWin || i == dealer {
+				mult = 2
+			}
+			pay := roundUp100(base * mult)
+			d[i] -= pay
+			d[winner] += pay
+		}
+	} else {
+		mult := 4
+		if dealerWin {
+			mult = 6
+		}
+		pay := roundUp100(base * mult)
+		d[ctx.From] -= pay
+		d[winner] += pay
+	}
+	return d
+}
+
+func roundUp100(n int) int {
+	if n%100 == 0 {
+		return n
+	}
+	return n + (100 - n%100)
+}
+
 // ScoreWin computes the final score breakdown.
 func (r Rule) ScoreWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) rules.Score {
 	combined := hand.Concealed

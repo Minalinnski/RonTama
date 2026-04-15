@@ -107,6 +107,28 @@ func hasSuit(c [tile.NumKinds]int, s tile.Suit) bool {
 	return false
 }
 
+// Settle implements rules.RuleSet.
+//
+// Sichuan: tsumo → each live (not-already-won) non-winner pays BasePts;
+// ron → discarder pays 2× BasePts.
+func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, hasWon [4]bool) [4]int {
+	var d [4]int
+	if ctx.Tsumo {
+		for i := 0; i < 4; i++ {
+			if i == winner || hasWon[i] {
+				continue
+			}
+			d[i] -= score.BasePts
+			d[winner] += score.BasePts
+		}
+	} else {
+		pay := score.BasePts * 2
+		d[ctx.From] -= pay
+		d[winner] += pay
+	}
+	return d
+}
+
 // ScoreWin computes Sichuan score. See package doc for patterns.
 func (Rule) ScoreWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) rules.Score {
 	combined := hand.Concealed

@@ -43,6 +43,14 @@ type RuleSet interface {
 	// ScoreWin returns the score breakdown for a win. Behavior is
 	// undefined when CanWin would return false.
 	ScoreWin(hand tile.Hand, winTile tile.Tile, ctx WinContext) Score
+
+	// Settle returns per-seat point deltas for one win, given the
+	// already-computed Score, the dealer seat, and which seats have
+	// already won this round (for blood-battle: those seats don't pay).
+	//
+	// The riichi pot (if any) is settled by the caller, not here —
+	// rules don't need to know about it.
+	Settle(dealer, winner int, ctx WinContext, score Score, hasWon [4]bool) [4]int
 }
 
 // WinContext is the situational metadata around a potential win that

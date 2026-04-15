@@ -149,7 +149,7 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 				return nil, fmt.Errorf("seat %d declared invalid tsumo", seat)
 			}
 			score := rule.ScoreWin(st.Players[seat].Hand, drawn, ctx)
-			settleTsumo(st, seat, score)
+			applySettlement(st, seat, ctx, score)
 			win := WinEvent{Seat: seat, Tsumo: true, From: -1, Tile: drawn, Score: score}
 			result.Wins = append(result.Wins, win)
 			obs.OnWin(st, win)
@@ -283,7 +283,7 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 				RoundWind:   tile.East,
 			}
 			score := st.Rule.ScoreWin(st.Players[r.Player].Hand, discard, ctx)
-			settleRon(st, r.Player, from, score)
+			applySettlement(st, r.Player, ctx, score)
 			win := WinEvent{Seat: r.Player, Tsumo: false, From: from, Tile: discard, Score: score}
 			out.wins = append(out.wins, win)
 			st.Players[r.Player].HasWon = true
@@ -382,20 +382,20 @@ func applyCall(st *State, c Call, discard tile.Tile, from int) {
 	})
 }
 
-// settleTsumo charges all live non-winners.
-func settleTsumo(st *State, winner int, score rules.Score) {
+// applySettlement asks the rule for per-seat deltas and applies them,
+// then pays the riichi pot to the winner (whoever takes the round
+// first claims the entire accumulated pot).
+func applySettlement(st *State, winner int, ctx rules.WinContext, score rules.Score) {
+	hasWon := [NumPlayers]bool{}
 	for i := 0; i < NumPlayers; i++ {
-		if i == winner || st.Players[i].HasWon {
-			continue
-		}
-		st.Players[i].Score -= score.BasePts
-		st.Players[winner].Score += score.BasePts
+		hasWon[i] = st.Players[i].HasWon
 	}
-}
-
-// settleRon charges only the discarder.
-func settleRon(st *State, winner, loser int, score rules.Score) {
-	pts := score.BasePts * 2 // ron pays double in Sichuan
-	st.Players[loser].Score -= pts
-	st.Players[winner].Score += pts
+	deltas := st.Rule.Settle(st.Dealer, winner, ctx, score, hasWon)
+	for i := 0; i < NumPlayers; i++ {
+		st.Players[i].Score += deltas[i]
+	}
+	if st.RiichiPot > 0 {
+		st.Players[winner].Score += st.RiichiPot
+		st.RiichiPot = 0
+	}
 }
