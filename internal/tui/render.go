@@ -32,35 +32,72 @@ func renderTileCompact(t tile.Tile) string {
 // renderTileBox renders a tile as a small bordered box, used in the
 // concealed hand area where the player needs to "see" each tile.
 //
-// 3-wide box: ┌──┐
+// 3-wide box: ╭──╮
 //             │1m│
-//             └──┘
+//             ╰──╯
+//
+// Selected state changes the border color rather than wrapping the box in
+// another style — wrapping a multi-line border with Underline/Bold breaks
+// JoinHorizontal alignment in Lipgloss.
 func renderTileBox(t tile.Tile, selected bool) string {
 	body := suitStyle(t).Render(fmt.Sprintf("%-2s", t.String()))
-	box := lipgloss.NewStyle().
+	bc := chromeColor
+	if selected {
+		bc = selectedColor
+	}
+	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(chromeColor).
+		BorderForeground(bc).
 		Padding(0, 0).
 		Render(body)
-	if selected {
-		box = selectedTileStyle.Render(box)
-	}
-	return box
 }
 
 // renderHandConcealed renders the concealed hand horizontally with tile
-// boxes; the optional drawn tile is shown separated by a space and a
-// vertical bar.
-func renderHandConcealed(tiles []tile.Tile, drawn *tile.Tile, selectedIdx int) string {
+// boxes. drawnIdx is the index (within tiles) of the tile that was
+// just drawn this turn — it gets visually separated by a space gap and
+// vertical bar so the player can see what they just picked up.
+//
+// selectedIdx is the cursor position; if it equals an index, that tile
+// is highlighted with the selected border color. -1 = no selection.
+func renderHandConcealed(tiles []tile.Tile, drawnIdx, selectedIdx int) string {
 	parts := make([]string, 0, len(tiles)+2)
 	for i, t := range tiles {
+		if i == drawnIdx && i > 0 {
+			parts = append(parts, lipgloss.NewStyle().Foreground(chromeColor).Render(" "))
+		}
 		parts = append(parts, renderTileBox(t, i == selectedIdx))
 	}
-	if drawn != nil {
-		parts = append(parts, lipgloss.NewStyle().Foreground(chromeColor).Render(" │ "))
-		parts = append(parts, renderTileBox(*drawn, selectedIdx == len(tiles)))
-	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
+
+// renderHandWithKeyHints renders the hand with single-character key
+// hints below each tile (digits 1-9, then a/b/c/d/e for 10-14).
+//
+// Returns the multi-line string ready to print under a header.
+func renderHandWithKeyHints(tiles []tile.Tile, drawnIdx, selectedIdx int) string {
+	hand := renderHandConcealed(tiles, drawnIdx, selectedIdx)
+	// Build the key-hint row. Each tile box is 4 chars wide; we centre a
+	// single character under each.
+	keys := "123456789abcde"
+	var hintParts []string
+	gap := false
+	for i := range tiles {
+		if i == drawnIdx && i > 0 {
+			hintParts = append(hintParts, " ")
+			gap = true
+		}
+		ch := byte('?')
+		if i < len(keys) {
+			ch = keys[i]
+		}
+		_ = gap
+		// "  c " width 4 to match the tile box width
+		hintParts = append(hintParts, lipgloss.NewStyle().
+			Foreground(chromeColor).
+			Render(fmt.Sprintf(" %c  ", ch)))
+	}
+	hintRow := lipgloss.JoinHorizontal(lipgloss.Top, hintParts...)
+	return lipgloss.JoinVertical(lipgloss.Left, hand, hintRow)
 }
 
 // renderRiver renders a discard pile as compact tokens with line wrap.

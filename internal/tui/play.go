@@ -145,7 +145,24 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	tiles := m.prompt.View.OwnHand.ConcealedTiles()
 	maxIdx := len(tiles) - 1
 
-	switch msg.String() {
+	s := msg.String()
+	// Number / letter quick-select: 1..9 → 0..8, a..e → 9..13.
+	if len(s) == 1 {
+		c := s[0]
+		idx := -1
+		switch {
+		case c >= '1' && c <= '9':
+			idx = int(c - '1')
+		case c >= 'a' && c <= 'e':
+			idx = 9 + int(c-'a')
+		}
+		if idx >= 0 && idx <= maxIdx {
+			m.selected = idx
+			return m, nil
+		}
+	}
+
+	switch s {
 	case "left", "h":
 		if m.selected > 0 {
 			m.selected--
@@ -155,7 +172,6 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected++
 		}
 	case "t":
-		// Tsumo
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 		m.prompt = nil
 	case " ", "enter":
@@ -204,13 +220,18 @@ func (m PlayModel) View() string {
 		return "Loading..."
 	}
 	header := m.renderHeader()
-	tableTop := m.renderSeatHeader(2) // North
+	// Cross layout (you at the bottom, seat 0):
+	//   top    = seat 2 (across)
+	//   left   = seat 3 (previous in turn order)
+	//   right  = seat 1 (next in turn order)
+	//   bottom = seat 0 (you)
+	tableTop := m.renderSeatHeader(2)
 	tableMid := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.renderSeatBlock(1, "left"), // West
+		m.renderSeatBlock(3),
 		strings.Repeat(" ", 4),
 		m.renderCenterRivers(),
 		strings.Repeat(" ", 4),
-		m.renderSeatBlock(3, "right"), // East
+		m.renderSeatBlock(1),
 	)
 	tableBot := m.renderSelfBlock()
 	logBlock := m.renderLog()
@@ -265,37 +286,40 @@ func (m PlayModel) renderHeader() string {
 	return headerStyle.Render(strings.Join(parts, " | ") + "  Scores: " + strings.Join(scores, " "))
 }
 
-// renderSeatHeader summarises a remote seat in 1-2 lines (used for North).
+// renderSeatHeader summarises a remote seat in a single line (used for the
+// "across" seat at the top of the table).
 func (m PlayModel) renderSeatHeader(seat int) string {
 	st := m.state
 	p := st.Players[seat]
-	dq := renderSuit(p.Dingque)
-	if p.Dingque == tile.SuitWind {
-		dq = "?"
-	}
-	mark := ""
-	if p.HasWon {
-		mark = " ✓"
-	}
-	hand := fmt.Sprintf("Hand: %d", p.Hand.ConcealedCount())
-	return chromeStyle.Render(fmt.Sprintf("%s%s   %s   缺%s   %s",
-		seatLabel(seat), mark, hand, dq, renderMelds(p.Hand.Melds)))
+	dq := dingqueLabel(p.Dingque)
+	mark := winMark(p.HasWon)
+	return chromeStyle.Render(fmt.Sprintf("%s%s   Hand:%d   缺:%s   %s",
+		seatLabel(seat), mark, p.Hand.ConcealedCount(), dq, renderMelds(p.Hand.Melds)))
 }
 
-// renderSeatBlock summarises a side seat (West/East) vertically.
-func (m PlayModel) renderSeatBlock(seat int, _ string) string {
+// renderSeatBlock summarises a side seat (left/right column).
+func (m PlayModel) renderSeatBlock(seat int) string {
 	st := m.state
 	p := st.Players[seat]
-	dq := renderSuit(p.Dingque)
-	if p.Dingque == tile.SuitWind {
-		dq = "?"
-	}
-	mark := ""
-	if p.HasWon {
-		mark = " ✓"
-	}
-	return chromeStyle.Render(fmt.Sprintf("%s%s\nHand: %d\n缺: %s\nMelds: %s",
+	dq := dingqueLabel(p.Dingque)
+	mark := winMark(p.HasWon)
+	return chromeStyle.Render(fmt.Sprintf("%s%s\nHand: %d\n缺:   %s\nMelds: %s",
 		seatLabel(seat), mark, p.Hand.ConcealedCount(), dq, renderMelds(p.Hand.Melds)))
+}
+
+// dingqueLabel renders the chosen dingque suit ("?" if not yet picked).
+func dingqueLabel(s tile.Suit) string {
+	if s == tile.SuitWind || s == tile.SuitDragon {
+		return "?"
+	}
+	return renderSuit(s)
+}
+
+func winMark(hasWon bool) string {
+	if hasWon {
+		return " ✓"
+	}
+	return ""
 }
 
 // renderCenterRivers shows all four rivers stacked.
@@ -314,19 +338,29 @@ func (m PlayModel) renderSelfBlock() string {
 	p := st.Players[HumanSeat]
 	tiles := p.Hand.ConcealedTiles()
 
-	dq := renderSuit(p.Dingque)
-	if p.Dingque == tile.SuitWind {
-		dq = "?"
-	}
-	header := chromeStyle.Render(fmt.Sprintf("You (%s)  缺%s   Melds: %s   Score: %+d",
-		seatLabel(HumanSeat), dq, renderMelds(p.Hand.Melds), p.Score))
+	header := chromeStyle.Render(fmt.Sprintf("You (%s)   缺:%s   Melds: %s   Score: %+d",
+		seatLabel(HumanSeat), dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
 
-	var hand string
-	if m.prompt != nil && m.prompt.Kind == "draw" {
-		hand = renderHandConcealed(tiles, nil, m.selected)
-	} else {
-		hand = renderHandConcealed(tiles, nil, -1)
+	// Find the drawn tile's position in the sorted tiles list so we
+	// can render it visually separated. -1 = no draw to highlight.
+	drawnIdx := -1
+	if p.JustDrew != nil {
+		jd := *p.JustDrew
+		// The hand was sorted; find the LAST occurrence of jd to point at
+		// the freshly-drawn copy (in case the player already had copies).
+		for i := len(tiles) - 1; i >= 0; i-- {
+			if tiles[i] == jd {
+				drawnIdx = i
+				break
+			}
+		}
 	}
+
+	sel := -1
+	if m.prompt != nil && m.prompt.Kind == "draw" {
+		sel = m.selected
+	}
+	hand := renderHandWithKeyHints(tiles, drawnIdx, sel)
 	return lipgloss.JoinVertical(lipgloss.Left, header, hand)
 }
 
@@ -352,14 +386,13 @@ func (m PlayModel) renderPrompt() string {
 	case "dingque":
 		return promptStyle.Render("Choose 缺 suit:  m=萬  p=筒  s=索")
 	case "draw":
+		drewLabel := "no draw (post-call discard)"
+		if m.prompt.View.JustDrew != nil {
+			drewLabel = "drew " + m.prompt.View.JustDrew.String()
+		}
 		return promptStyle.Render(fmt.Sprintf(
-			"Your turn — drew %s.  ←/→ select  space/enter discard  t=tsumo  q=quit",
-			func() string {
-				if m.prompt.View.JustDrew != nil {
-					return m.prompt.View.JustDrew.String()
-				}
-				return "?"
-			}(),
+			"Your turn — %s.  ←/→ or 1-9/a-e select  space/enter discard  t=tsumo  q=quit",
+			drewLabel,
 		))
 	case "call":
 		opts := []string{"n=pass"}
