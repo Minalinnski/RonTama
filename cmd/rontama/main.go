@@ -35,6 +35,16 @@ func main() {
 			fmt.Fprintln(os.Stderr, "botbattle:", err)
 			os.Exit(1)
 		}
+	case "serve":
+		if err := runServe(rest); err != nil {
+			fmt.Fprintln(os.Stderr, "serve:", err)
+			os.Exit(1)
+		}
+	case "join":
+		if err := runJoin(rest); err != nil {
+			fmt.Fprintln(os.Stderr, "join:", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -62,5 +72,9 @@ Usage:
   rontama play -tui    interactive 1-round Sichuan: you (seat 0) vs 3 Easy bots
   rontama botbattle [-rounds N] [-seats easy,medium,hard,hard]
                        compare bot tiers over N rounds
+  rontama serve [-port 7777] [-timeout 30s]
+                       host a Sichuan game over LAN; empty seats fill with Easy bots
+  rontama join [-addr host:port]
+                       connect to a server (mDNS auto-discover by default) as a headless Easy bot
 `)
 }
