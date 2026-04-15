@@ -1,0 +1,79 @@
+# GoReleaser config for RonTama.
+# See https://goreleaser.com for full reference.
+version: 2
+
+project_name: rontama
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: rontama
+    main: ./cmd/rontama
+    binary: rontama
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # No 32-bit targets, no windows arm64.
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+
+# Homebrew tap publication. Requires a separate repo
+# `Minalinnski/homebrew-tap` and a HOMEBREW_TAP_GITHUB_TOKEN secret in
+# the release workflow. Comment out until the tap repo exists.
+#
+# brews:
+#   - name: rontama
+#     repository:
+#       owner: Minalinnski
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+#     homepage: https://github.com/Minalinnski/RonTama
+#     description: "Terminal mahjong (Sichuan + Riichi) with LAN play"
+#     license: MIT
+#     install: |
+#       bin.install "rontama"
+#     test: |
+#       system "#{bin}/rontama --help"

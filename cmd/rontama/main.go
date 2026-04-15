@@ -1,11 +1,6 @@
 // Command rontama is the entrypoint for the RonTama mahjong game.
 //
-// Subcommands:
-//
-//	rontama          launch the (Phase-0 placeholder) TUI
-//	rontama play     run a CLI 4-bot Sichuan match (Phase 2+)
-//
-// More subcommands (serve, join, botbattle) come in later phases.
+// Subcommands: see printUsage() below.
 package main
 
 import (
@@ -13,6 +8,13 @@ import (
 	"os"
 
 	"github.com/Minalinnski/RonTama/internal/tui"
+)
+
+// Build-time variables populated by GoReleaser via -ldflags.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -45,6 +47,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "join:", err)
 			os.Exit(1)
 		}
+	case "version", "-v", "--version":
+		fmt.Printf("rontama %s (%s, built %s)\n", version, commit, date)
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -76,5 +80,6 @@ Usage:
                        host a Sichuan game over LAN; empty seats fill with Easy bots
   rontama join [-addr host:port]
                        connect to a server (mDNS auto-discover by default) as a headless Easy bot
+  rontama version      print build version
 `)
 }
