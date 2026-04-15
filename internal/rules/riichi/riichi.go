@@ -1,0 +1,100 @@
+// Package riichi implements Japanese Riichi mahjong.
+//
+// Phase 6 scope (intentionally MVP — full Riichi rules are a multi-week
+// undertaking):
+//
+//	tiles:    full 136 (4 of each of the 34 kinds)
+//	wins:     standard 4-sets+pair, chiitoitsu, kokushi musou
+//	yaku:     立直, 一発, 門前清自摸和, 断幺九, 役牌 (dragons + round/seat winds),
+//	          一気通貫, 三色同順, 対々和, 七対子, 混一色, 清一色, 国士無双
+//	fu:       base 20 + meld/wait/win-method bonuses (round to 10)
+//	score:    standard formula with mangan/haneman/baiman/sanbaiman/yakuman caps
+//	dora:     +1 han per dora tile (uradora only on riichi wins)
+//	furiten:  basic — own-discard furiten only (no temp/eternal distinction)
+//
+// Not yet implemented (intentional):
+//   - 平和 (pinfu) — needs full structural decomposition; deferred
+//   - 三色同刻, 三槓子, 小三元 etc. — uncommon yaku
+//   - Riichi declaration mechanics (declared via Player interface but
+//     scored opportunistically when WinContext.Riichi is set)
+//   - 振聴 across temporary windows; double riichi mostly relies on
+//     Player setting WinContext.DoubleRiichi
+//
+// Caller passes any Riichi-specific state in WinContext (Riichi flag,
+// dora indicators, etc.); the Rule itself is stateless.
+package riichi
+
+import (
+	"github.com/Minalinnski/RonTama/internal/rules"
+	"github.com/Minalinnski/RonTama/internal/shanten"
+	"github.com/Minalinnski/RonTama/internal/tile"
+)
+
+// Rule is the Riichi mahjong ruleset.
+type Rule struct{}
+
+// New returns the Riichi ruleset.
+func New() *Rule { return &Rule{} }
+
+// Name implements rules.RuleSet.
+func (Rule) Name() string { return "riichi" }
+
+// TileKinds returns all 34 kinds.
+func (Rule) TileKinds() []tile.Tile { return tile.AllKinds() }
+
+// CopiesPerTile is 4.
+func (Rule) CopiesPerTile() int { return 4 }
+
+// HandSize is 13.
+func (Rule) HandSize() int { return 13 }
+
+// AllowsChi is true in Riichi.
+func (Rule) AllowsChi() bool { return true }
+
+// RequiresDingque is false.
+func (Rule) RequiresDingque() bool { return false }
+
+// CanWin returns true if hand+winningTile is a standard, chiitoi, or
+// kokushi shape AND has at least one yaku (otherwise no-yaku → no-win).
+func (r Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bool {
+	combined := hand.Concealed
+	combined[winTile]++
+	melds := len(hand.Melds)
+
+	// Shape check
+	standard := shanten.OfStandard(combined, melds) == -1
+	chiitoi := melds == 0 && shanten.OfSevenPairs(combined) == -1
+	kokushi := melds == 0 && shanten.OfKokushi(combined) == -1
+	if !standard && !chiitoi && !kokushi {
+		return false
+	}
+
+	// Need at least one yaku (Riichi requires yaku for valid win,
+	// "no-yaku" hands cannot be declared).
+	res := r.evaluate(hand, winTile, ctx, standard, chiitoi, kokushi)
+	return res.Han > 0 || len(res.Yakuman) > 0
+}
+
+// ScoreWin computes the final score breakdown.
+func (r Rule) ScoreWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) rules.Score {
+	combined := hand.Concealed
+	combined[winTile]++
+	melds := len(hand.Melds)
+	standard := shanten.OfStandard(combined, melds) == -1
+	chiitoi := melds == 0 && shanten.OfSevenPairs(combined) == -1
+	kokushi := melds == 0 && shanten.OfKokushi(combined) == -1
+
+	res := r.evaluate(hand, winTile, ctx, standard, chiitoi, kokushi)
+
+	patterns := append([]string{}, res.Yaku...)
+	for _, name := range res.Yakuman {
+		patterns = append(patterns, name)
+	}
+
+	base := basePoints(res.Han, res.Fu, res.Yakuman)
+	return rules.Score{
+		Patterns: patterns,
+		Fan:      res.Han,
+		BasePts:  base,
+	}
+}

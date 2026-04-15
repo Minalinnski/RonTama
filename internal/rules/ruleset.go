@@ -53,6 +53,23 @@ type WinContext struct {
 	LastTile    bool      // 海底捞月 / 河底捞鱼
 	AfterKan    bool      // 杠上开花
 	KanGrab     bool      // 抢杠胡
+
+	// Riichi-only:
+	RoundWind        tile.Tile // East/South/West/North (場風)
+	Riichi           bool      // declared riichi this round
+	DoubleRiichi     bool      // declared riichi on first turn (W-riichi)
+	Ippatsu          bool      // win within one go-around of riichi declaration
+	DoraIndicators   []tile.Tile // visible dora indicators
+	UraDoraIndicators []tile.Tile // ura-dora indicators (revealed only on riichi win)
+}
+
+// SeatWind returns the player's seat wind tile relative to the dealer.
+// Seat 0 sits at the dealer position; (seat - dealer) mod 4 = 0 → East,
+// 1 → South, 2 → West, 3 → North.
+func (c WinContext) SeatWind() tile.Tile {
+	winds := []tile.Tile{tile.East, tile.South, tile.West, tile.North}
+	idx := (c.Seat - c.Dealer + 4) % 4
+	return winds[idx]
 }
 
 // IsDealer reports whether the winner was the dealer this round.

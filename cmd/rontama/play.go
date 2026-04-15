@@ -11,6 +11,8 @@ import (
 
 	"github.com/Minalinnski/RonTama/internal/ai/easy"
 	"github.com/Minalinnski/RonTama/internal/game"
+	"github.com/Minalinnski/RonTama/internal/rules"
+	"github.com/Minalinnski/RonTama/internal/rules/riichi"
 	"github.com/Minalinnski/RonTama/internal/rules/sichuan"
 	"github.com/Minalinnski/RonTama/internal/tui"
 )
@@ -23,12 +25,18 @@ func runPlay(args []string) error {
 	rounds := fs.Int("rounds", 1, "number of rounds to run")
 	verbose := fs.Bool("v", false, "verbose log (game-level events)")
 	useTUI := fs.Bool("tui", false, "launch interactive TUI (you at seat 0, 3 easy bots)")
+	ruleName := fs.String("rule", "sichuan", "rule set: sichuan | riichi")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	rule, err := pickRule(*ruleName)
+	if err != nil {
+		return err
+	}
+
 	if *useTUI {
-		return runPlayTUI()
+		return runPlayTUI(rule)
 	}
 
 	logLevel := slog.LevelInfo
@@ -37,7 +45,6 @@ func runPlay(args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 
-	rule := sichuan.New()
 	players := [game.NumPlayers]game.Player{
 		easy.New("E"), easy.New("S"), easy.New("W"), easy.New("N"),
 	}
@@ -72,8 +79,19 @@ func runPlay(args []string) error {
 //     and blocks on a response channel that the UI populates from key handlers
 //   - bot seats use easy.Bot
 //   - tui.TUIObserver pushes EventMsg to the UI on every public state change
-func runPlayTUI() error {
-	rule := sichuan.New()
+// pickRule resolves a rule name to the concrete RuleSet.
+func pickRule(name string) (rules.RuleSet, error) {
+	switch name {
+	case "sichuan":
+		return sichuan.New(), nil
+	case "riichi":
+		return riichi.New(), nil
+	default:
+		return nil, fmt.Errorf("unknown rule %q (want: sichuan | riichi)", name)
+	}
+}
+
+func runPlayTUI(rule rules.RuleSet) error {
 	model := tui.NewPlayModel(rule)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 
