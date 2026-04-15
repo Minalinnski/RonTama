@@ -48,6 +48,9 @@ func (Rule) CopiesPerTile() int { return 4 }
 // HandSize is 13.
 func (Rule) HandSize() int { return 13 }
 
+// StartingScore is 25000 (standard Riichi opening stack).
+func (Rule) StartingScore() int { return 25000 }
+
 // AllowsChi is true in Riichi.
 func (Rule) AllowsChi() bool { return true }
 

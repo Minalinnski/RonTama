@@ -46,6 +46,15 @@ type State struct {
 	// the discarded tile via the meld and must discard immediately.
 	// (Kan from discard does draw a replacement tile so it does not set this.)
 	skipNextDraw bool
+
+	// Riichi tracking (Riichi rule only).
+	//   Riichi[s]       — seat s has declared riichi this round
+	//   IppatsuValid[s] — seat s could still win 一発 (riichi + win
+	//                     within one go-around, no interrupting call)
+	//   RiichiPot       — total 1000-point sticks accumulated this round
+	Riichi       [NumPlayers]bool
+	IppatsuValid [NumPlayers]bool
+	RiichiPot    int
 }
 
 // NewState initializes a fresh round.
@@ -60,8 +69,12 @@ func NewState(rule rules.RuleSet, dealer int) (*State, error) {
 		Dealer:  dealer,
 		Current: dealer,
 	}
+	startScore := rule.StartingScore()
 	for i := 0; i < NumPlayers; i++ {
-		st.Players[i] = &PlayerState{Dingque: tile.SuitWind} // "unset" sentinel
+		st.Players[i] = &PlayerState{
+			Dingque: tile.SuitWind, // "unset" sentinel
+			Score:   startScore,
+		}
 	}
 	// Deal HandSize tiles to each player.
 	hand := rule.HandSize()
@@ -123,6 +136,7 @@ func (s *State) View(seat int) PlayerView {
 	for i := 0; i < NumPlayers; i++ {
 		v.Dingque[i] = s.Players[i].Dingque
 		v.HasWon[i] = s.Players[i].HasWon
+		v.Riichi[i] = s.Riichi[i]
 		v.Discards[i] = s.Discards[i]
 		v.Melds[i] = s.Players[i].Hand.Melds
 		v.Scores[i] = s.Players[i].Score

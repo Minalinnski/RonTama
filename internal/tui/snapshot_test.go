@@ -23,9 +23,11 @@ func TestSnapshot_FullView(t *testing.T) {
 	for i := 0; i < game.NumPlayers; i++ {
 		st.Players[i].Dingque = []tile.Suit{tile.SuitSou, tile.SuitMan, tile.SuitPin, tile.SuitMan}[i]
 	}
-	st.Discards[0] = tile.MustParseHand("1s 2s 9p")
-	st.Discards[1] = tile.MustParseHand("1m 2m")
-	st.Discards[2] = tile.MustParseHand("9p")
+	// Mid-game-ish discard piles with enough length to test wrapping.
+	st.Discards[0] = tile.MustParseHand("1s 2s 9p 3m 7s 4p 8s")
+	st.Discards[1] = tile.MustParseHand("1m 2m 9p 5s 7p 4m 9m 8m 3p")
+	st.Discards[2] = tile.MustParseHand("9p 5p 8m 7s 1s 2s")
+	st.Discards[3] = tile.MustParseHand("3m 4m 6p 7s 9s")
 	st.Players[2].Hand.Melds = []tile.Meld{
 		{Kind: tile.Pon, Tiles: []tile.Tile{tile.Sou5, tile.Sou5, tile.Sou5}, From: 1},
 	}

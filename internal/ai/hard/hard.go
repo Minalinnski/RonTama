@@ -63,10 +63,15 @@ func (b *Bot) OnDraw(view game.PlayerView) game.DrawAction {
 	mySh := ourShanten(view)
 	if threat >= 18 && mySh >= 2 {
 		t := PickSafeDiscard(view, mySh)
+		// Hard never declares riichi during defense — would lock the hand.
 		return game.DrawAction{Kind: game.DrawDiscard, Discard: t}
 	}
 	t := medium.PickValueDiscard(view)
-	return game.DrawAction{Kind: game.DrawDiscard, Discard: t}
+	act := game.DrawAction{Kind: game.DrawDiscard, Discard: t}
+	if ai.ShouldDeclareRiichi(view, t) {
+		act.DeclareRiichi = true
+	}
+	return act
 }
 
 // OnCallOpportunity: ron when offered, otherwise pass.

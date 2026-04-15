@@ -75,7 +75,11 @@ func (b *Bot) OnDraw(view game.PlayerView) game.DrawAction {
 		return game.DrawAction{Kind: game.DrawDiscard, Discard: t}
 	}
 	t := PickValueDiscard(view)
-	return game.DrawAction{Kind: game.DrawDiscard, Discard: t}
+	act := game.DrawAction{Kind: game.DrawDiscard, Discard: t}
+	if ai.ShouldDeclareRiichi(view, t) {
+		act.DeclareRiichi = true
+	}
+	return act
 }
 
 // OnCallOpportunity: same as Easy (always ron, never call to stay concealed).

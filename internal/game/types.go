@@ -64,26 +64,33 @@ const (
 
 // DrawAction is the player's response to having just drawn a tile.
 type DrawAction struct {
-	Kind     DrawActionKind
-	Discard  tile.Tile // when Kind == DrawDiscard
-	KanTile  tile.Tile // when Kind == DrawConcealedKan or DrawAddedKan
+	Kind    DrawActionKind
+	Discard tile.Tile // when Kind == DrawDiscard
+	KanTile tile.Tile // when Kind == DrawConcealedKan or DrawAddedKan
+
+	// DeclareRiichi (Riichi rule only) — when true and Kind ==
+	// DrawDiscard, the player simultaneously declares riichi: pays a
+	// 1000-point stick into the pot, locks the hand for the rest of
+	// the round, and gains the 立直 yaku on any subsequent win.
+	DeclareRiichi bool
 }
 
 // PlayerView is the per-player visible information passed to bots /
 // clients. Hidden info (other hands, the wall) is not included.
 type PlayerView struct {
-	Rule        rules.RuleSet
-	Seat        int
-	Dealer      int
-	WallLeft    int
-	OwnHand     tile.Hand
-	JustDrew    *tile.Tile         // last tile drawn (nil if not currently this player's draw)
-	Dingque     [NumPlayers]tile.Suit // chosen dingque per seat (Sichuan); SuitWind = "not yet"
-	HasWon      [NumPlayers]bool      // who has already won this round (blood battle)
-	Discards    [NumPlayers][]tile.Tile
-	Melds       [NumPlayers][]tile.Meld
-	Scores      [NumPlayers]int
-	Round       int
-	TurnsTaken  int
+	Rule       rules.RuleSet
+	Seat       int
+	Dealer     int
+	WallLeft   int
+	OwnHand    tile.Hand
+	JustDrew   *tile.Tile            // last tile drawn (nil if not currently this player's draw)
+	Dingque    [NumPlayers]tile.Suit // chosen dingque per seat (Sichuan); SuitWind = "not yet"
+	HasWon     [NumPlayers]bool      // who has already won this round (blood battle)
+	Riichi     [NumPlayers]bool      // declared riichi this round (Riichi rule)
+	Discards   [NumPlayers][]tile.Tile
+	Melds      [NumPlayers][]tile.Meld
+	Scores     [NumPlayers]int
+	Round      int
+	TurnsTaken int
 }
 

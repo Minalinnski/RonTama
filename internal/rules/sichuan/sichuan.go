@@ -52,6 +52,9 @@ func (Rule) CopiesPerTile() int { return 4 }
 // HandSize is 13.
 func (Rule) HandSize() int { return 13 }
 
+// StartingScore is 0; Sichuan rounds report deltas, not absolute scores.
+func (Rule) StartingScore() int { return 0 }
+
 // AllowsChi is false in Sichuan.
 func (Rule) AllowsChi() bool { return false }
 

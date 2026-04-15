@@ -156,3 +156,45 @@ func AlwaysRon(opps []game.Call) game.Call {
 	}
 	return game.Pass
 }
+
+// ShouldDeclareRiichi returns true when the bot can/should declare
+// riichi this turn: rule supports it (Riichi only), hand fully
+// concealed, not already riichi'd, score >= 1000, wall >= 4, and
+// discarding `discard` leaves the hand at tenpai.
+//
+// Bots use this from OnDraw to decide the DeclareRiichi flag on a
+// DrawDiscard action.
+func ShouldDeclareRiichi(view game.PlayerView, discard tile.Tile) bool {
+	if view.Rule.RequiresDingque() {
+		return false // Sichuan
+	}
+	if view.HasWon[view.Seat] {
+		return false
+	}
+	if view.Riichi[view.Seat] {
+		return false // already declared
+	}
+	if view.Scores[view.Seat] < 1000 {
+		return false
+	}
+	if view.WallLeft < 4 {
+		return false
+	}
+	hand := view.OwnHand
+	for _, m := range hand.Melds {
+		if m.Kind != tile.ConcealedKan {
+			return false // open hand
+		}
+	}
+	// Already riichi'd? We can detect by whether the seat is locked into
+	// a tenpai shape forever — but the View doesn't carry that. Bots
+	// typically declare riichi only the first time they reach tenpai;
+	// this simple check stays correct because the loop validates and
+	// rejects double-declarations.
+	probe := hand.Concealed
+	if probe[discard] == 0 {
+		return false
+	}
+	probe[discard]--
+	return shanten.Of(probe, len(hand.Melds)) == 0
+}

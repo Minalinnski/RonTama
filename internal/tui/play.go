@@ -220,18 +220,18 @@ func (m PlayModel) View() string {
 		return "Loading..."
 	}
 	header := m.renderHeader()
-	// Cross layout (you at the bottom, seat 0):
-	//   top    = seat 2 (across)
-	//   left   = seat 3 (previous in turn order)
-	//   right  = seat 1 (next in turn order)
-	//   bottom = seat 0 (you)
-	tableTop := m.renderSeatHeader(2)
+	// True-table cross layout (you at the bottom, seat 0):
+	//   top    = seat 2 (across)         — info + river horizontally
+	//   left   = seat 3 (previous)       — info + vertical river
+	//   right  = seat 1 (next)           — info + vertical river
+	//   bottom = seat 0 (you)            — info + horizontal river + hand
+	tableTop := lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, m.renderTopSeat(2))
 	tableMid := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.renderSeatBlock(3),
-		strings.Repeat(" ", 4),
-		m.renderCenterRivers(),
-		strings.Repeat(" ", 4),
-		m.renderSeatBlock(1),
+		m.renderSideSeat(3, true), // left
+		strings.Repeat(" ", 6),
+		m.renderCenterPanel(),
+		strings.Repeat(" ", 6),
+		m.renderSideSeat(1, false), // right
 	)
 	tableBot := m.renderSelfBlock()
 	logBlock := m.renderLog()
@@ -240,7 +240,7 @@ func (m PlayModel) View() string {
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		"",
-		lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, tableTop),
+		tableTop,
 		"",
 		tableMid,
 		"",
@@ -286,25 +286,77 @@ func (m PlayModel) renderHeader() string {
 	return headerStyle.Render(strings.Join(parts, " | ") + "  Scores: " + strings.Join(scores, " "))
 }
 
-// renderSeatHeader summarises a remote seat in a single line (used for the
-// "across" seat at the top of the table).
-func (m PlayModel) renderSeatHeader(seat int) string {
+// renderTopSeat renders the across-table seat: info on one line with
+// the river spread horizontally below it.
+func (m PlayModel) renderTopSeat(seat int) string {
 	st := m.state
 	p := st.Players[seat]
-	dq := dingqueLabel(p.Dingque)
 	mark := winMark(p.HasWon)
-	return chromeStyle.Render(fmt.Sprintf("%s%s   Hand:%d   缺:%s   %s",
-		seatLabel(seat), mark, p.Hand.ConcealedCount(), dq, renderMelds(p.Hand.Melds)))
+	info := chromeStyle.Render(fmt.Sprintf("%s%s   Hand:%d   缺:%s   Melds:%s   Score:%+d",
+		seatLabel(seat), mark, p.Hand.ConcealedCount(),
+		dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
+	river := chromeStyle.Render("River: ") + renderRiver(st.Discards[seat], 18)
+	return lipgloss.JoinVertical(lipgloss.Center, info, river)
 }
 
-// renderSeatBlock summarises a side seat (left/right column).
-func (m PlayModel) renderSeatBlock(seat int) string {
+// renderSideSeat renders a left/right seat: 4-line info + vertical river.
+//
+// If alignLeft is true the river column is anchored to the left edge
+// (for the left seat); otherwise to the right (for the right seat).
+func (m PlayModel) renderSideSeat(seat int, alignLeft bool) string {
 	st := m.state
 	p := st.Players[seat]
-	dq := dingqueLabel(p.Dingque)
 	mark := winMark(p.HasWon)
-	return chromeStyle.Render(fmt.Sprintf("%s%s\nHand: %d\n缺:   %s\nMelds: %s",
-		seatLabel(seat), mark, p.Hand.ConcealedCount(), dq, renderMelds(p.Hand.Melds)))
+	info := chromeStyle.Render(fmt.Sprintf("%s%s\nHand: %d\n缺:   %s\nMelds: %s\nScore: %+d",
+		seatLabel(seat), mark, p.Hand.ConcealedCount(),
+		dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
+	river := renderVerticalRiver(st.Discards[seat])
+	hAlign := lipgloss.Left
+	if !alignLeft {
+		hAlign = lipgloss.Right
+	}
+	return lipgloss.JoinVertical(hAlign, info, "", river)
+}
+
+// renderVerticalRiver lays out a discard pile as a stacked column,
+// max ~10 tiles tall (then it wraps into a parallel column).
+func renderVerticalRiver(tiles []tile.Tile) string {
+	if len(tiles) == 0 {
+		return chromeStyle.Render("River: -")
+	}
+	const colHeight = 10
+	cols := (len(tiles) + colHeight - 1) / colHeight
+	colStrs := make([]string, cols)
+	for c := 0; c < cols; c++ {
+		start := c * colHeight
+		end := start + colHeight
+		if end > len(tiles) {
+			end = len(tiles)
+		}
+		var rows []string
+		rows = append(rows, chromeStyle.Render("River:"))
+		for _, t := range tiles[start:end] {
+			rows = append(rows, renderTileCompact(t))
+		}
+		colStrs[c] = lipgloss.JoinVertical(lipgloss.Left, rows...)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, colStrs...)
+}
+
+// renderCenterPanel shows wall-info / dora-indicator / round-wind in
+// the middle of the table.
+func (m PlayModel) renderCenterPanel() string {
+	st := m.state
+	rw := "東"
+	lines := []string{
+		chromeStyle.Render(fmt.Sprintf("Wall: %d", st.Wall.Remaining())),
+		chromeStyle.Render(fmt.Sprintf("Round: %s", rw)),
+		chromeStyle.Render(fmt.Sprintf("Turn: %d", st.TurnsTaken)),
+	}
+	if st.RiichiPot > 0 {
+		lines = append(lines, chromeStyle.Render(fmt.Sprintf("Pot: %d", st.RiichiPot)))
+	}
+	return lipgloss.JoinVertical(lipgloss.Center, lines...)
 }
 
 // dingqueLabel renders the chosen dingque suit ("?" if not yet picked).
@@ -322,17 +374,6 @@ func winMark(hasWon bool) string {
 	return ""
 }
 
-// renderCenterRivers shows all four rivers stacked.
-func (m PlayModel) renderCenterRivers() string {
-	st := m.state
-	var lines []string
-	for i := 0; i < game.NumPlayers; i++ {
-		river := renderRiver(st.Discards[i], 14)
-		lines = append(lines, fmt.Sprintf("%s ► %s", seatLabel(i)[:1], river))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func (m PlayModel) renderSelfBlock() string {
 	st := m.state
 	p := st.Players[HumanSeat]
@@ -340,6 +381,7 @@ func (m PlayModel) renderSelfBlock() string {
 
 	header := chromeStyle.Render(fmt.Sprintf("You (%s)   缺:%s   Melds: %s   Score: %+d",
 		seatLabel(HumanSeat), dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
+	myRiver := chromeStyle.Render("Your river: ") + renderRiver(m.state.Discards[HumanSeat], 18)
 
 	// Find the drawn tile's position in the sorted tiles list so we
 	// can render it visually separated. -1 = no draw to highlight.
@@ -361,7 +403,7 @@ func (m PlayModel) renderSelfBlock() string {
 		sel = m.selected
 	}
 	hand := renderHandWithKeyHints(tiles, drawnIdx, sel)
-	return lipgloss.JoinVertical(lipgloss.Left, header, hand)
+	return lipgloss.JoinVertical(lipgloss.Left, header, myRiver, hand)
 }
 
 func (m PlayModel) renderLog() string {

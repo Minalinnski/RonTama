@@ -23,6 +23,11 @@ type RuleSet interface {
 	// dealer's first draw (always 13 in supported variants).
 	HandSize() int
 
+	// StartingScore is the per-player score at round start. Sichuan
+	// uses 0 (rounds settle as deltas); Riichi uses 25000 (so riichi
+	// stick payments are real subtractions).
+	StartingScore() int
+
 	// AllowsChi reports whether 吃 (run-call from previous player) is allowed.
 	// Sichuan: false. Riichi: true.
 	AllowsChi() bool

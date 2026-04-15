@@ -5,8 +5,15 @@ import (
 	"log/slog"
 
 	"github.com/Minalinnski/RonTama/internal/rules"
+	"github.com/Minalinnski/RonTama/internal/shanten"
 	"github.com/Minalinnski/RonTama/internal/tile"
 )
+
+// shantenAfter is a tiny shim used by validateRiichiDeclaration: pick
+// the most permissive shanten (Riichi rule allows chiitoi/kokushi).
+func shantenAfter(c [tile.NumKinds]int, melds int) int {
+	return shanten.Of(c, melds)
+}
 
 // RoundResult summarises one round's outcome.
 type RoundResult struct {
@@ -130,6 +137,9 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 				Dingque:     st.Players[seat].Dingque,
 				LastTile:    st.LastTile,
 				AfterKan:    st.AfterKan,
+				Riichi:      st.Riichi[seat],
+				Ippatsu:     st.IppatsuValid[seat],
+				RoundWind:   tile.East,
 			}
 			// Validate: hand+drawn was already added, validate by removing
 			// drawn before passing to CanWin (CanWin re-adds it).
@@ -157,10 +167,27 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 			if st.Players[seat].Hand.Concealed[discard] == 0 {
 				return nil, fmt.Errorf("seat %d tried to discard %s but hand has 0", seat, discard)
 			}
+			// Riichi declaration: validate before mutating state.
+			if action.DeclareRiichi {
+				if err := validateRiichiDeclaration(st, seat, discard); err != nil {
+					return nil, fmt.Errorf("seat %d invalid riichi: %w", seat, err)
+				}
+				st.Players[seat].Score -= 1000
+				st.RiichiPot += 1000
+				st.Riichi[seat] = true
+				st.IppatsuValid[seat] = true
+				log.Info("riichi", "seat", seat, "discard", discard)
+			}
 			st.Players[seat].Hand.Remove(discard)
 			st.Players[seat].JustDrew = nil
 			st.Discards[seat] = append(st.Discards[seat], discard)
 			st.AfterKan = false
+			// Ippatsu invalidation: a player's own discard AFTER their
+			// riichi declaration closes their ippatsu window. Pon/kan
+			// invalidation happens in resolveCalls when the call is applied.
+			if !action.DeclareRiichi && st.Riichi[seat] {
+				st.IppatsuValid[seat] = false
+			}
 			obs.OnDiscard(st, seat, discard)
 			log.Debug("discard", "seat", seat, "tile", discard)
 
@@ -251,6 +278,9 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 				Dingque:     st.Players[r.Player].Dingque,
 				LastTile:    st.LastTile,
 				KanGrab:     st.GrabbableKanTile != nil && *st.GrabbableKanTile == discard,
+				Riichi:      st.Riichi[r.Player],
+				Ippatsu:     st.IppatsuValid[r.Player],
+				RoundWind:   tile.East,
 			}
 			score := st.Rule.ScoreWin(st.Players[r.Player].Hand, discard, ctx)
 			settleRon(st, r.Player, from, score)
@@ -276,6 +306,10 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 			applyCall(st, c, discard, from)
 			obs.OnCall(st, c.Kind, c.Player, from, discard)
 			log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
+			// Any call invalidates ippatsu for every riichi'd player.
+			for s := 0; s < NumPlayers; s++ {
+				st.IppatsuValid[s] = false
+			}
 			// Pon: caller's meld absorbs the discard; they must discard
 			// next without drawing. Open kan: caller still draws a
 			// replacement tile (kan-replacement → 嶺上開花 candidate).
@@ -289,6 +323,46 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		}
 	}
 	return callResolution{nextSeat: -1}
+}
+
+// validateRiichiDeclaration checks that seat may declare riichi by
+// discarding `discard` this turn:
+//   - rule must allow it (Riichi only, indicated by !RequiresDingque)
+//   - hand must be fully concealed (no open melds; ankans are OK)
+//   - score >= 1000
+//   - wall has at least 4 tiles left (opponents must have a chance to deal in)
+//   - discarding `discard` leaves the hand at tenpai (shanten == 0)
+//   - hasn't already declared riichi this round
+func validateRiichiDeclaration(st *State, seat int, discard tile.Tile) error {
+	rule := st.Rule
+	if rule.RequiresDingque() {
+		return fmt.Errorf("ruleset %q does not support riichi", rule.Name())
+	}
+	if st.Riichi[seat] {
+		return fmt.Errorf("already in riichi")
+	}
+	p := st.Players[seat]
+	for _, m := range p.Hand.Melds {
+		if m.Kind != tile.ConcealedKan {
+			return fmt.Errorf("hand is open (cannot riichi)")
+		}
+	}
+	if p.Score < 1000 {
+		return fmt.Errorf("insufficient score (%d < 1000)", p.Score)
+	}
+	if st.Wall.Remaining() < 4 {
+		return fmt.Errorf("wall too low (%d remaining)", st.Wall.Remaining())
+	}
+	// Tenpai after this discard: simulate the discard and call shanten.
+	probe := p.Hand.Concealed
+	if probe[discard] == 0 {
+		return fmt.Errorf("hand has no %s to discard", discard)
+	}
+	probe[discard]--
+	if shantenAfter(probe, len(p.Hand.Melds)) > 0 {
+		return fmt.Errorf("hand not tenpai after discarding %s", discard)
+	}
+	return nil
 }
 
 // applyCall records a meld for the calling player and removes the supporting tiles.
