@@ -15,6 +15,30 @@ type RoundResult struct {
 	FinalScores [NumPlayers]int
 }
 
+// Observer receives notifications as the round progresses. All methods
+// are optional; pass NoopObserver{} or nil to ignore. The TUI uses
+// this to drive view updates without polling the State.
+type Observer interface {
+	OnRoundStart(s *State)
+	OnDingque(s *State, seat int, suit tile.Suit)
+	OnDraw(s *State, seat int, t tile.Tile)
+	OnDiscard(s *State, seat int, t tile.Tile)
+	OnCall(s *State, kind CallKind, seat, from int, t tile.Tile)
+	OnWin(s *State, w WinEvent)
+	OnRoundEnd(s *State, r *RoundResult)
+}
+
+// NoopObserver implements Observer with empty methods.
+type NoopObserver struct{}
+
+func (NoopObserver) OnRoundStart(*State)                                {}
+func (NoopObserver) OnDingque(*State, int, tile.Suit)                   {}
+func (NoopObserver) OnDraw(*State, int, tile.Tile)                      {}
+func (NoopObserver) OnDiscard(*State, int, tile.Tile)                   {}
+func (NoopObserver) OnCall(*State, CallKind, int, int, tile.Tile)       {}
+func (NoopObserver) OnWin(*State, WinEvent)                             {}
+func (NoopObserver) OnRoundEnd(*State, *RoundResult)                    {}
+
 // WinEvent records one player's win during the round.
 type WinEvent struct {
 	Seat  int
@@ -27,13 +51,23 @@ type WinEvent struct {
 // RunRound drives a single round to completion. The caller passes
 // four players in seat order. Returns the round summary.
 func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *slog.Logger) (*RoundResult, error) {
+	return RunRoundWithObserver(rule, players, dealer, log, NoopObserver{})
+}
+
+// RunRoundWithObserver is RunRound + an Observer that gets notified at
+// every public state change. Used by the TUI to drive view updates.
+func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *slog.Logger, obs Observer) (*RoundResult, error) {
 	if log == nil {
 		log = slog.Default()
+	}
+	if obs == nil {
+		obs = NoopObserver{}
 	}
 	st, err := NewState(rule, dealer)
 	if err != nil {
 		return nil, err
 	}
+	obs.OnRoundStart(st)
 
 	// Phase 1: dingque (Sichuan).
 	if rule.RequiresDingque() {
@@ -43,6 +77,7 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 				return nil, fmt.Errorf("seat %d returned invalid dingque suit %d", seat, ds)
 			}
 			st.Players[seat].Dingque = ds
+			obs.OnDingque(st, seat, ds)
 			log.Debug("dingque chosen", "seat", seat, "suit", ds)
 		}
 	}
@@ -68,6 +103,7 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 		st.Players[seat].Hand.Add(drawn)
 		st.Players[seat].JustDrew = &drawn
 		st.TurnsTaken++
+		obs.OnDraw(st, seat, drawn)
 		log.Debug("draw", "seat", seat, "tile", drawn, "wall_left", st.Wall.Remaining())
 
 		action := players[seat].OnDraw(st.View(seat))
@@ -92,9 +128,9 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 			}
 			score := rule.ScoreWin(st.Players[seat].Hand, drawn, ctx)
 			settleTsumo(st, seat, score)
-			result.Wins = append(result.Wins, WinEvent{
-				Seat: seat, Tsumo: true, From: -1, Tile: drawn, Score: score,
-			})
+			win := WinEvent{Seat: seat, Tsumo: true, From: -1, Tile: drawn, Score: score}
+			result.Wins = append(result.Wins, win)
+			obs.OnWin(st, win)
 			log.Info("tsumo", "seat", seat, "patterns", score.Patterns, "fan", score.Fan)
 			st.Players[seat].HasWon = true
 			st.AfterKan = false
@@ -113,6 +149,7 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 			st.Players[seat].JustDrew = nil
 			st.Discards[seat] = append(st.Discards[seat], discard)
 			st.AfterKan = false
+			obs.OnDiscard(st, seat, discard)
 			log.Debug("discard", "seat", seat, "tile", discard)
 
 			// Solicit calls from other live seats. In Sichuan, multiple
@@ -120,7 +157,7 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 			// exclusive — first taker wins (priority order: ron > kan > pon).
 			calls := st.AvailableCallsOnDiscard(discard, seat)
 			if len(calls) > 0 {
-				next := resolveCalls(st, players, calls, discard, seat, log)
+				next := resolveCalls(st, players, calls, discard, seat, log, obs)
 				if next.endRound {
 					// All wins settled in resolveCalls; round may continue if not Done.
 					st.Current = next.nextSeat
@@ -155,6 +192,7 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 	for i := 0; i < NumPlayers; i++ {
 		result.FinalScores[i] = st.Players[i].Score
 	}
+	obs.OnRoundEnd(st, result)
 	return result, nil
 }
 
@@ -166,7 +204,7 @@ type callResolution struct {
 }
 
 // resolveCalls picks the highest-priority call(s) and applies them.
-func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard tile.Tile, from int, log *slog.Logger) callResolution {
+func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard tile.Tile, from int, log *slog.Logger, obs Observer) callResolution {
 	// Group by kind. Ron has highest priority (and may be claimed by multiple).
 	var rons, kans, pons []Call
 	for _, c := range calls {
@@ -204,10 +242,10 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 			}
 			score := st.Rule.ScoreWin(st.Players[r.Player].Hand, discard, ctx)
 			settleRon(st, r.Player, from, score)
-			out.wins = append(out.wins, WinEvent{
-				Seat: r.Player, Tsumo: false, From: from, Tile: discard, Score: score,
-			})
+			win := WinEvent{Seat: r.Player, Tsumo: false, From: from, Tile: discard, Score: score}
+			out.wins = append(out.wins, win)
 			st.Players[r.Player].HasWon = true
+			obs.OnWin(st, win)
 			log.Info("ron", "seat", r.Player, "from", from, "patterns", score.Patterns, "fan", score.Fan)
 		}
 		// next live seat after `from`
@@ -224,6 +262,7 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		choice := players[c.Player].OnCallOpportunity(view, discard, from, []Call{c})
 		if choice.Kind == c.Kind {
 			applyCall(st, c, discard, from)
+			obs.OnCall(st, c.Kind, c.Player, from, discard)
 			log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
 			// caller must now act (they will OnDraw without drawing? Actually after
 			// pon they must discard immediately. We model that by setting Current

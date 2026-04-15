@@ -59,6 +59,7 @@ Usage:
   rontama tui          same as above
   rontama play [-v] [-rounds N]
                        run an N-round Sichuan match between 4 Easy bots
+  rontama play -tui    interactive 1-round Sichuan: you (seat 0) vs 3 Easy bots
   rontama botbattle [-rounds N] [-seats easy,medium,hard,hard]
                        compare bot tiers over N rounds
 `)
