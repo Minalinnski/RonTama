@@ -40,6 +40,12 @@ type State struct {
 	// Bookkeeping for kan-grab (抢杠胡): the current player just declared
 	// an added kan with this tile, allowing other players one window to ron.
 	GrabbableKanTile *tile.Tile
+
+	// skipNextDraw is set after a pon: the next iteration of the loop
+	// should NOT draw from the wall — the caller has already absorbed
+	// the discarded tile via the meld and must discard immediately.
+	// (Kan from discard does draw a replacement tile so it does not set this.)
+	skipNextDraw bool
 }
 
 // NewState initializes a fresh round.

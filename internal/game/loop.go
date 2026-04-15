@@ -94,21 +94,33 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 			}
 			st.Current = seat
 		}
-		drawn, ok := st.Wall.Draw()
-		if !ok {
-			result.Exhaustion = true
-			break
+		var drawn tile.Tile
+		if st.skipNextDraw {
+			// Post-pon: the caller absorbed the discarded tile via the
+			// meld, so don't pull from the wall. They must discard.
+			st.skipNextDraw = false
+			st.Players[seat].JustDrew = nil
+		} else {
+			d, ok := st.Wall.Draw()
+			if !ok {
+				result.Exhaustion = true
+				break
+			}
+			drawn = d
+			st.LastTile = st.Wall.Remaining() == 0
+			st.Players[seat].Hand.Add(drawn)
+			st.Players[seat].JustDrew = &drawn
+			obs.OnDraw(st, seat, drawn)
+			log.Debug("draw", "seat", seat, "tile", drawn, "wall_left", st.Wall.Remaining())
 		}
-		st.LastTile = st.Wall.Remaining() == 0
-		st.Players[seat].Hand.Add(drawn)
-		st.Players[seat].JustDrew = &drawn
 		st.TurnsTaken++
-		obs.OnDraw(st, seat, drawn)
-		log.Debug("draw", "seat", seat, "tile", drawn, "wall_left", st.Wall.Remaining())
 
 		action := players[seat].OnDraw(st.View(seat))
 		switch action.Kind {
 		case DrawTsumo:
+			if st.Players[seat].JustDrew == nil {
+				return nil, fmt.Errorf("seat %d declared tsumo without a draw (post-call hands cannot tsumo without kan-replacement)", seat)
+			}
 			ctx := rules.WinContext{
 				WinningTile: drawn,
 				Tsumo:       true,
@@ -264,18 +276,15 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 			applyCall(st, c, discard, from)
 			obs.OnCall(st, c.Kind, c.Player, from, discard)
 			log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
-			// caller must now act (they will OnDraw without drawing? Actually after
-			// pon they must discard immediately. We model that by setting Current
-			// without drawing. For simplicity: caller's hand now has 14 tiles
-			// post-pon-via-meld-and-removed-supports? Actually pon doesn't add a
-			// draw — the meld absorbs the discard. We need them to discard next.
-			// So set Current = c.Player and let next iteration treat them as
-			// already-drew-but-skip-draw.
-			//
-			// Phase 2 simplification: random-bot driver handles this in OnDraw
-			// path, so we instead trigger a "mock draw" of nil. To avoid extra
-			// branches, the loop will simply make c.Player draw next, which is
-			// incorrect for kan/pon flow. We'll fix in a later phase.
+			// Pon: caller's meld absorbs the discard; they must discard
+			// next without drawing. Open kan: caller still draws a
+			// replacement tile (kan-replacement → 嶺上開花 candidate).
+			switch c.Kind {
+			case CallPon:
+				st.skipNextDraw = true
+			case CallKan:
+				st.AfterKan = true
+			}
 			return callResolution{nextSeat: c.Player}
 		}
 	}
