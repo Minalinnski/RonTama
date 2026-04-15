@@ -288,30 +288,37 @@ type callResolution struct {
 }
 
 // resolveCalls picks the highest-priority call(s) and applies them.
+//
+// Each eligible player is asked ONCE with all their applicable options
+// (e.g. a player who could ron AND pon sees both choices and picks one).
+// Ron always wins over pon/kan; multi-ron is allowed (一炮多响).
 func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard tile.Tile, from int, log *slog.Logger, obs Observer) callResolution {
-	// Group by kind. Ron has highest priority (and may be claimed by multiple).
-	var rons, kans, pons []Call
+	// Group calls by player.
+	byPlayer := map[int][]Call{}
 	for _, c := range calls {
-		switch c.Kind {
-		case CallRon:
-			rons = append(rons, c)
-		case CallKan:
-			kans = append(kans, c)
-		case CallPon:
-			pons = append(pons, c)
+		byPlayer[c.Player] = append(byPlayer[c.Player], c)
+	}
+
+	// First pass: ask every eligible player.
+	choices := map[int]Call{}
+	var declaredRons []Call
+	for player, opts := range byPlayer {
+		view := st.View(player)
+		choice := players[player].OnCallOpportunity(view, discard, from, opts)
+		choices[player] = choice
+		if choice.Kind == CallRon {
+			// Find the matching ron Call from opts (Player + Kind match).
+			for _, c := range opts {
+				if c.Kind == CallRon {
+					declaredRons = append(declaredRons, c)
+					break
+				}
+			}
 		}
 	}
 
-	// Ask each ron-eligible player; collect those that opt in.
-	var declaredRons []Call
-	for _, r := range rons {
-		view := st.View(r.Player)
-		choice := players[r.Player].OnCallOpportunity(view, discard, from, []Call{r})
-		if choice.Kind == CallRon {
-			declaredRons = append(declaredRons, r)
-		}
-	}
 	if len(declaredRons) > 0 {
+		_ = choices // pon/kan choices ignored when ron wins
 		out := callResolution{endRound: false}
 		for _, r := range declaredRons {
 			ctx := rules.WinContext{
@@ -341,31 +348,52 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		return out
 	}
 
-	// No ron — try kan, then pon. Both consume the discard and shift turn.
-	allCalls := append([]Call{}, kans...)
-	allCalls = append(allCalls, pons...)
-	for _, c := range allCalls {
-		view := st.View(c.Player)
-		choice := players[c.Player].OnCallOpportunity(view, discard, from, []Call{c})
-		if choice.Kind == c.Kind {
-			applyCall(st, c, discard, from)
-			obs.OnCall(st, c.Kind, c.Player, from, discard)
-			log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
-			// Any call invalidates ippatsu for every riichi'd player.
-			for s := 0; s < NumPlayers; s++ {
-				st.IppatsuValid[s] = false
+	// No ron — apply the first kan/pon choice we received. Kan beats pon
+	// when both are claimed by the same player (the player can pick either).
+	// Across players: kan from any player beats pon from any player.
+	var pickedCall *Call
+	for player, choice := range choices {
+		if choice.Kind == CallKan {
+			for _, c := range byPlayer[player] {
+				if c.Kind == CallKan {
+					tmp := c
+					pickedCall = &tmp
+					break
+				}
 			}
-			// Pon: caller's meld absorbs the discard; they must discard
-			// next without drawing. Open kan: caller still draws a
-			// replacement tile (kan-replacement → 嶺上開花 candidate).
-			switch c.Kind {
-			case CallPon:
-				st.skipNextDraw = true
-			case CallKan:
-				st.AfterKan = true
-			}
-			return callResolution{nextSeat: c.Player}
+			break
 		}
+	}
+	if pickedCall == nil {
+		for player, choice := range choices {
+			if choice.Kind == CallPon {
+				for _, c := range byPlayer[player] {
+					if c.Kind == CallPon {
+						tmp := c
+						pickedCall = &tmp
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+	if pickedCall != nil {
+		c := *pickedCall
+		applyCall(st, c, discard, from)
+		obs.OnCall(st, c.Kind, c.Player, from, discard)
+		log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
+		// Any call invalidates ippatsu for every riichi'd player.
+		for s := 0; s < NumPlayers; s++ {
+			st.IppatsuValid[s] = false
+		}
+		switch c.Kind {
+		case CallPon:
+			st.skipNextDraw = true
+		case CallKan:
+			st.AfterKan = true
+		}
+		return callResolution{nextSeat: c.Player}
 	}
 	return callResolution{nextSeat: -1}
 }

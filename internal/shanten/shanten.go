@@ -107,6 +107,97 @@ func OfSevenPairs(hand [tile.NumKinds]int) int {
 	return 6 - pairs + shortage
 }
 
+// IsWinningStandard reports whether `hand` (the count vector of
+// concealed tiles, including any winning tile already added) plus
+// `melds` declared melds forms an EXACT 4-sets + 1-pair winning shape.
+//
+// This is stricter than `OfStandard(...) == -1`: shanten conflates
+// pair-partials and run-partials (XY waiting on Z) since both reduce
+// the tile count needed by 1 — that's correct for shanten counting
+// but wrong for "is this a complete win" because a run-partial
+// without a real pair cannot satisfy the 4-sets + 1-pair invariant.
+//
+// Used by Rule.CanWin to avoid offering invalid ron/tsumo opportunities.
+func IsWinningStandard(hand [tile.NumKinds]int, melds int) bool {
+	need := 4 - melds
+	if need < 0 {
+		return false
+	}
+	for i := 0; i < tile.NumKinds; i++ {
+		if hand[i] >= 2 {
+			hand[i] -= 2
+			ok := canFormSetsExact(&hand, 0, need)
+			hand[i] += 2
+			if ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// canFormSetsExact returns true iff `c` from index `start` can be
+// fully consumed by exactly `need` sets (triplets or runs).
+func canFormSetsExact(c *[tile.NumKinds]int, start, need int) bool {
+	for start < tile.NumKinds && (*c)[start] == 0 {
+		start++
+	}
+	if start >= tile.NumKinds {
+		return need == 0
+	}
+	if need == 0 {
+		// tiles remain but no more sets allowed
+		return false
+	}
+	// Triplet
+	if (*c)[start] >= 3 {
+		(*c)[start] -= 3
+		if canFormSetsExact(c, start, need-1) {
+			(*c)[start] += 3
+			return true
+		}
+		(*c)[start] += 3
+	}
+	// Run (suit tiles only; need start in 0..6 within suit)
+	if start < 27 && start%9 <= 6 && (*c)[start+1] > 0 && (*c)[start+2] > 0 {
+		(*c)[start]--
+		(*c)[start+1]--
+		(*c)[start+2]--
+		if canFormSetsExact(c, start, need-1) {
+			(*c)[start]++
+			(*c)[start+1]++
+			(*c)[start+2]++
+			return true
+		}
+		(*c)[start]++
+		(*c)[start+1]++
+		(*c)[start+2]++
+	}
+	return false
+}
+
+// IsWinningSevenPairs reports whether the concealed-only hand forms
+// 7 distinct pairs (chiitoitsu).
+func IsWinningSevenPairs(hand [tile.NumKinds]int) bool {
+	pairs, total := 0, 0
+	for _, c := range hand {
+		total += c
+		if c == 2 {
+			pairs++
+		} else if c != 0 {
+			// 3 or 4 of a kind disqualifies chiitoi (each pair must be distinct)
+			return false
+		}
+	}
+	return pairs == 7 && total == 14
+}
+
+// IsWinningKokushi reports whether the concealed hand is the 13
+// distinct yaochuu plus a pair from those 13.
+func IsWinningKokushi(hand [tile.NumKinds]int) bool {
+	return OfKokushi(hand) == -1
+}
+
 // OfKokushi returns shanten for kokushi musou (thirteen orphans).
 func OfKokushi(hand [tile.NumKinds]int) int {
 	yaochuu := []tile.Tile{

@@ -477,7 +477,7 @@ func (m PlayModel) renderTablePanel(width int) string {
 	body := lipgloss.JoinVertical(lipgloss.Center, lines...)
 	return lipgloss.NewStyle().
 		Width(width).
-		Border(lipgloss.NormalBorder()).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(tableColor).
 		Padding(0, 1).
 		Render(body)
@@ -554,8 +554,10 @@ func splitDrawn(hand tile.Hand, drew *tile.Tile) (sorted []tile.Tile, drawn *til
 	return all, nil
 }
 
-// renderVerticalRiver lays out a discard pile as a stacked column,
-// max ~10 tiles tall (then it wraps into a parallel column).
+// renderVerticalRiver lays out a discard pile as one or more stacked
+// columns. The "River:" label only appears on the first column; later
+// columns are unlabeled to avoid the "River:River:" doubling that
+// happens when wrap kicks in.
 func renderVerticalRiver(tiles []tile.Tile) string {
 	if len(tiles) == 0 {
 		return chromeStyle.Render("River: -")
@@ -570,13 +572,22 @@ func renderVerticalRiver(tiles []tile.Tile) string {
 			end = len(tiles)
 		}
 		var rows []string
-		rows = append(rows, chromeStyle.Render("River:"))
+		if c == 0 {
+			rows = append(rows, chromeStyle.Render("River:"))
+		} else {
+			rows = append(rows, lipgloss.NewStyle().Foreground(dimColor).Render("  ··"))
+		}
 		for _, t := range tiles[start:end] {
 			rows = append(rows, renderTileCompact(t))
 		}
 		colStrs[c] = lipgloss.JoinVertical(lipgloss.Left, rows...)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, colStrs...)
+	// Add a single-space separator between columns.
+	parts := []string{colStrs[0]}
+	for i := 1; i < len(colStrs); i++ {
+		parts = append(parts, " ", colStrs[i])
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
 // renderCenterPanel shows wall-info / dora-indicator / round-wind in

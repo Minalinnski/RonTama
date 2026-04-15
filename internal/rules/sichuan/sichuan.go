@@ -89,12 +89,12 @@ func (Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bool
 		}
 	}
 
-	// Standard form
-	if shanten.OfStandard(combined, melds) == -1 {
+	// Standard form (strict: exact 4-sets + 1-pair, no run-partials masquerading as pairs)
+	if shanten.IsWinningStandard(combined, melds) {
 		return true
 	}
 	// Seven pairs (only if no melds)
-	if melds == 0 && shanten.OfSevenPairs(combined) == -1 {
+	if melds == 0 && shanten.IsWinningSevenPairs(combined) {
 		return true
 	}
 	return false
@@ -142,8 +142,8 @@ func (Rule) ScoreWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) ru
 	fan := 0
 
 	// Detect base patterns (mutually exclusive ish — pick the highest pair-form).
-	isSevenPairs := len(melds) == 0 && shanten.OfSevenPairs(combined) == -1
-	isStandard := shanten.OfStandard(combined, len(melds)) == -1
+	isSevenPairs := len(melds) == 0 && shanten.IsWinningSevenPairs(combined)
+	isStandard := shanten.IsWinningStandard(combined, len(melds))
 
 	allTriplets := isStandard && allTripletForm(combined, melds)
 	singleSuit := singleSuitOnly(combined, melds)

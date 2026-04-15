@@ -175,6 +175,48 @@ func TestAdvancingTiles_OneShanten(t *testing.T) {
 	}
 }
 
+func TestIsWinningStandard_PassesValidWin(t *testing.T) {
+	// 345m + 333s + 456s + 789s + 88s — a real 4-sets-plus-pair shape.
+	h := counts("345m 333s 456s 789s 88s")
+	if !IsWinningStandard(h, 0) {
+		t.Errorf("expected winning, got false")
+	}
+}
+
+func TestIsWinningStandard_RejectsRunPartialAsPair(t *testing.T) {
+	// 444m + 456s + 56s -- the old shanten formula returned -1 because it
+	// treated 56s as a pair-partial. The exact-decomposition check
+	// correctly rejects this: there's no actual pair.
+	// Concealed: 4m 4m 4m 4s 5s 5s 6s 6s = 8 tiles + melds=2 ⇒ would form
+	// the user's bug-reported "ron offered on 4m" case.
+	h := [tile.NumKinds]int{}
+	h[tile.Man4] = 3
+	h[tile.Sou4] = 1
+	h[tile.Sou5] = 2
+	h[tile.Sou6] = 2
+	if IsWinningStandard(h, 2) {
+		t.Errorf("8-tile concealed with run-partial-as-pair should NOT be winning, but was")
+	}
+}
+
+func TestIsWinningStandard_FullConcealedWin(t *testing.T) {
+	// 13-tile concealed + win on Pin1 → 14-tile complete shape, no melds.
+	h := counts("123m 456m 789m 123p 11p")
+	if !IsWinningStandard(h, 0) {
+		t.Errorf("expected winning")
+	}
+}
+
+func TestIsWinningSevenPairs(t *testing.T) {
+	if !IsWinningSevenPairs(counts("11m 22m 33m 44p 55p 66s 77z")) {
+		t.Errorf("expected chiitoi win")
+	}
+	// Has a 4-of-a-kind: chiitoi requires DISTINCT pairs.
+	if IsWinningSevenPairs(counts("1111m 22m 33m 44p 55p 66s")) {
+		t.Errorf("4-of-a-kind should disqualify chiitoi")
+	}
+}
+
 func TestSichuan_NoHonors(t *testing.T) {
 	// Sichuan-flavored hand: only suited tiles.
 	h := counts("123456789m 11p 234p")

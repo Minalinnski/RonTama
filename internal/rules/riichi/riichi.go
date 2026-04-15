@@ -67,10 +67,10 @@ func (r Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bo
 	combined[winTile]++
 	melds := len(hand.Melds)
 
-	// Shape check
-	standard := shanten.OfStandard(combined, melds) == -1
-	chiitoi := melds == 0 && shanten.OfSevenPairs(combined) == -1
-	kokushi := melds == 0 && shanten.OfKokushi(combined) == -1
+	// Shape check (strict — see shanten.IsWinningStandard godoc)
+	standard := shanten.IsWinningStandard(combined, melds)
+	chiitoi := melds == 0 && shanten.IsWinningSevenPairs(combined)
+	kokushi := melds == 0 && shanten.IsWinningKokushi(combined)
 	if !standard && !chiitoi && !kokushi {
 		return false
 	}
@@ -130,9 +130,9 @@ func (r Rule) ScoreWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) 
 	combined := hand.Concealed
 	combined[winTile]++
 	melds := len(hand.Melds)
-	standard := shanten.OfStandard(combined, melds) == -1
-	chiitoi := melds == 0 && shanten.OfSevenPairs(combined) == -1
-	kokushi := melds == 0 && shanten.OfKokushi(combined) == -1
+	standard := shanten.IsWinningStandard(combined, melds)
+	chiitoi := melds == 0 && shanten.IsWinningSevenPairs(combined)
+	kokushi := melds == 0 && shanten.IsWinningKokushi(combined)
 
 	res := r.evaluate(hand, winTile, ctx, standard, chiitoi, kokushi)
 
