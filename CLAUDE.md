@@ -73,6 +73,11 @@ internal/
 - 不要为了"以后可能需要"加抽象（YAGNI）
 - 不要在没读现有代码前重复造轮子（先 grep）
 
-## 当前状态（Phase 0）
+## 当前状态
 
-只有 hello-world TUI。下一步是 Phase 1：实现 `internal/tile/` + `internal/shanten/`。
+见 git log + README roadmap。
+
+## 已知 TODO（不影响阶段推进）
+
+- **Bot 强度未对齐难度名**：Phase 3 实现了 Easy/Medium/Hard 三档不同策略，但在 Sichuan 血战的"先手为王"特性下，Medium 的"追求清一色"和 Hard 的"防守"实际拖慢了胡牌速度，1000 局对战中三档差异不明显。Phase 7 (bot 强化) 时再做 ML 风格的真正调优；现在的实现保证了三档各有不同代码路径，方便后续替换。
+- **call 后流程简化**：`internal/game/loop.go` 中 pon/kan 后没有正确处理"主叫者直接弃牌"流程，目前 call 之后会让主叫者再摸一张。Easy bot 永不 call，所以 Phase 2-3 测试不会触发。Phase 5 联机时统一修。

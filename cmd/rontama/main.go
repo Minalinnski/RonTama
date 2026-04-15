@@ -30,6 +30,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "play:", err)
 			os.Exit(1)
 		}
+	case "botbattle":
+		if err := runBotbattle(rest); err != nil {
+			fmt.Fprintln(os.Stderr, "botbattle:", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		printUsage()
 	default:
@@ -54,5 +59,7 @@ Usage:
   rontama tui          same as above
   rontama play [-v] [-rounds N]
                        run an N-round Sichuan match between 4 Easy bots
+  rontama botbattle [-rounds N] [-seats easy,medium,hard,hard]
+                       compare bot tiers over N rounds
 `)
 }

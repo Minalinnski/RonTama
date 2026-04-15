@@ -1,0 +1,158 @@
+// Package ai is the umbrella for bot implementations and shared
+// utilities. Concrete bots live in subpackages (easy, medium, hard).
+package ai
+
+import (
+	"fmt"
+
+	"github.com/Minalinnski/RonTama/internal/game"
+	"github.com/Minalinnski/RonTama/internal/rules"
+	"github.com/Minalinnski/RonTama/internal/shanten"
+	"github.com/Minalinnski/RonTama/internal/tile"
+)
+
+// Difficulty enumerates the bot strength tiers.
+//
+// The factory that turns a Difficulty into a concrete game.Player
+// lives in cmd/rontama (importing easy/medium/hard would create a
+// cycle, since those packages import this one for shared helpers).
+type Difficulty int
+
+const (
+	Easy Difficulty = iota
+	Medium
+	Hard
+)
+
+func (d Difficulty) String() string {
+	switch d {
+	case Easy:
+		return "easy"
+	case Medium:
+		return "medium"
+	case Hard:
+		return "hard"
+	default:
+		return "unknown"
+	}
+}
+
+// ParseDifficulty parses "easy" / "medium" / "hard" (case-sensitive).
+func ParseDifficulty(s string) (Difficulty, error) {
+	switch s {
+	case "easy":
+		return Easy, nil
+	case "medium":
+		return Medium, nil
+	case "hard":
+		return Hard, nil
+	default:
+		return 0, fmt.Errorf("unknown difficulty %q (want: easy|medium|hard)", s)
+	}
+}
+
+// ShantenFn returns the appropriate shanten function for a rule.
+func ShantenFn(r rules.RuleSet) func([tile.NumKinds]int, int) int {
+	if r.RequiresDingque() {
+		return shanten.OfSichuan
+	}
+	return shanten.Of
+}
+
+// ChooseDingqueLeastTiles picks the suit (man/pin/sou) with the fewest
+// tiles in the hand. Used by every difficulty as a baseline.
+func ChooseDingqueLeastTiles(view game.PlayerView) tile.Suit {
+	counts := [3]int{}
+	for s := 0; s < 3; s++ {
+		for n := 0; n < 9; n++ {
+			counts[s] += view.OwnHand.Concealed[s*9+n]
+		}
+	}
+	best := tile.SuitMan
+	bestCnt := counts[0]
+	for s := 1; s < 3; s++ {
+		if counts[s] < bestCnt {
+			bestCnt = counts[s]
+			best = tile.Suit(s)
+		}
+	}
+	return best
+}
+
+// ComputeSeen tallies tile copies visible to the seat: own concealed,
+// melds (all players'), and discards.
+func ComputeSeen(view game.PlayerView) [tile.NumKinds]int {
+	var seen [tile.NumKinds]int
+	for i, c := range view.OwnHand.Concealed {
+		seen[i] = c
+	}
+	for p := 0; p < game.NumPlayers; p++ {
+		for _, m := range view.Melds[p] {
+			for _, t := range m.Tiles {
+				seen[t]++
+			}
+		}
+		for _, t := range view.Discards[p] {
+			seen[t]++
+		}
+	}
+	return seen
+}
+
+// CanTsumo checks whether the just-drawn tile completes a winning hand
+// for the seat. Returns true only when JustDrew is non-nil.
+func CanTsumo(view game.PlayerView) bool {
+	if view.JustDrew == nil {
+		return false
+	}
+	hand := view.OwnHand
+	concealed := hand.Concealed
+	concealed[*view.JustDrew]--
+	probe := tile.Hand{Concealed: concealed, Melds: hand.Melds}
+	ctx := rules.WinContext{
+		WinningTile: *view.JustDrew,
+		Tsumo:       true,
+		From:        -1,
+		Seat:        view.Seat,
+		Dealer:      view.Dealer,
+		Dingque:     view.Dingque[view.Seat],
+	}
+	return view.Rule.CanWin(probe, *view.JustDrew, ctx)
+}
+
+// CountByKindInSuit returns the number of tiles in concealed of suit s.
+func CountByKindInSuit(c [tile.NumKinds]int, s tile.Suit) int {
+	n := 0
+	for i := 0; i < tile.NumKinds; i++ {
+		if c[i] > 0 && tile.Tile(i).Suit() == s {
+			n += c[i]
+		}
+	}
+	return n
+}
+
+// MustDiscardDingque returns a dingque-suit tile to discard, or
+// (0, false) if the hand has none.
+func MustDiscardDingque(view game.PlayerView) (tile.Tile, bool) {
+	dingque := view.Dingque[view.Seat]
+	if dingque == tile.SuitWind || dingque == tile.SuitDragon {
+		return 0, false
+	}
+	for i := 0; i < tile.NumKinds; i++ {
+		if view.OwnHand.Concealed[i] > 0 && tile.Tile(i).Suit() == dingque {
+			return tile.Tile(i), true
+		}
+	}
+	return 0, false
+}
+
+// AlwaysRon picks the ron call from opportunities, else returns Pass.
+// Shared default for "I always take the win" bots.
+func AlwaysRon(opps []game.Call) game.Call {
+	for _, o := range opps {
+		if o.Kind == game.CallRon {
+			return o
+		}
+	}
+	return game.Pass
+}
