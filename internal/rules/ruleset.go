@@ -36,6 +36,11 @@ type RuleSet interface {
 	// before play (Sichuan).
 	RequiresDingque() bool
 
+	// RequiresExchange3 reports whether the round opens with the
+	// "exchange three" (换三张) phase: every player picks 3 tiles of
+	// one suit and passes them in a fixed direction. Sichuan only.
+	RequiresExchange3() bool
+
 	// CanWin reports whether the given concealed hand + winning tile
 	// constitutes a valid agari under the rule.
 	CanWin(hand tile.Hand, winTile tile.Tile, ctx WinContext) bool

@@ -150,6 +150,24 @@ func newNetPlayer(c net.Conn, seat int, rule rules.RuleSet, log *slog.Logger) *n
 
 func (np *netPlayer) Name() string { return fmt.Sprintf("net-%d", np.seat) }
 
+// ChooseExchange3 implements game.Player by relaying to the client.
+func (np *netPlayer) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
+	body := proto.AskExchange3{OwnHand: view.OwnHand.Concealed}
+	if err := np.send(proto.KindAskExchange3, body); err != nil {
+		np.log.Warn("ask_exchange3 send failed", "err", err)
+		return [3]tile.Tile{}
+	}
+	env, err := np.recv()
+	if err != nil || env.Kind != proto.KindAnswerExchange3 {
+		return [3]tile.Tile{}
+	}
+	var ans proto.AnswerExchange3
+	if err := proto.DecodeBody(env, &ans); err != nil {
+		return [3]tile.Tile{}
+	}
+	return ans.Tiles
+}
+
 func (np *netPlayer) sendHello() error {
 	return np.send(proto.KindHello, proto.Hello{Seat: np.seat, Rule: np.rule.Name()})
 }
@@ -286,6 +304,9 @@ func (o *multicastObserver) push(s *game.State, note string) {
 }
 
 func (o *multicastObserver) OnRoundStart(s *game.State) { o.push(s, "round start") }
+func (o *multicastObserver) OnExchange3(s *game.State, picks [game.NumPlayers][3]tile.Tile, direction int) {
+	o.push(s, fmt.Sprintf("exchange-three direction %d", direction))
+}
 func (o *multicastObserver) OnDingque(s *game.State, seat int, suit tile.Suit) {
 	o.push(s, fmt.Sprintf("seat %d dingque %d", seat, suit))
 }

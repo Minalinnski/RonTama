@@ -26,21 +26,23 @@ type Envelope struct {
 
 // Message kinds (server -> client).
 const (
-	KindHello       = "hello"
-	KindRoundStart  = "round_start"
-	KindStateUpdate = "state_update"
-	KindAskDingque  = "ask_dingque"
-	KindAskDraw     = "ask_draw"
-	KindAskCall     = "ask_call"
-	KindRoundEnd    = "round_end"
-	KindError       = "error"
+	KindHello        = "hello"
+	KindRoundStart   = "round_start"
+	KindStateUpdate  = "state_update"
+	KindAskExchange3 = "ask_exchange3"
+	KindAskDingque   = "ask_dingque"
+	KindAskDraw      = "ask_draw"
+	KindAskCall      = "ask_call"
+	KindRoundEnd     = "round_end"
+	KindError        = "error"
 )
 
 // Message kinds (client -> server).
 const (
-	KindAnswerDingque = "answer_dingque"
-	KindAnswerDraw    = "answer_draw"
-	KindAnswerCall    = "answer_call"
+	KindAnswerExchange3 = "answer_exchange3"
+	KindAnswerDingque   = "answer_dingque"
+	KindAnswerDraw      = "answer_draw"
+	KindAnswerCall      = "answer_call"
 )
 
 // Hello is the first message a client receives upon joining.
@@ -74,6 +76,16 @@ type SeatPublic struct {
 	Discards      []tile.Tile `json:"discards"`
 	Score         int         `json:"score"`
 	HasWon        bool        `json:"has_won"`
+}
+
+// AskExchange3 asks the client for 3 tiles of one suit to pass.
+type AskExchange3 struct {
+	OwnHand [tile.NumKinds]int `json:"own_hand"`
+}
+
+// AnswerExchange3 is the client's exchange-three picks.
+type AnswerExchange3 struct {
+	Tiles [3]tile.Tile `json:"tiles"`
 }
 
 // AskDingque asks the client for their dingque suit choice.

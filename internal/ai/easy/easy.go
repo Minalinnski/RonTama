@@ -33,6 +33,11 @@ func (b *Bot) Name() string {
 	return b.N
 }
 
+// ChooseExchange3 implements game.Player.
+func (b *Bot) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
+	return ai.PickExchange3(view)
+}
+
 // ChooseDingque implements game.Player.
 func (b *Bot) ChooseDingque(view game.PlayerView) tile.Suit {
 	return ai.ChooseDingqueLeastTiles(view)

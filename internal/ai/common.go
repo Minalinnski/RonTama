@@ -146,6 +146,49 @@ func MustDiscardDingque(view game.PlayerView) (tile.Tile, bool) {
 	return 0, false
 }
 
+// PickExchange3 picks 3 tiles of one suit to pass during 换三张.
+// Strategy: choose the suit with the fewest tiles in hand (still
+// having at least 3); take the 3 lowest-numbered tiles of that suit.
+//
+// "Lowest" is a deliberate choice: it tends to dump terminals/edge
+// tiles which are less flexible for runs.
+func PickExchange3(view game.PlayerView) [3]tile.Tile {
+	c := view.OwnHand.Concealed
+	counts := [3]int{}
+	for s := 0; s < 3; s++ {
+		for n := 0; n < 9; n++ {
+			counts[s] += c[s*9+n]
+		}
+	}
+	bestSuit := -1
+	bestCount := 99
+	for s := 0; s < 3; s++ {
+		if counts[s] >= 3 && counts[s] < bestCount {
+			bestSuit = s
+			bestCount = counts[s]
+		}
+	}
+	if bestSuit < 0 {
+		// Pigeonhole: 13 tiles in 3 suits → at least one has >= 5.
+		// Fall through is defensive only.
+		for s := 0; s < 3; s++ {
+			if counts[s] > bestCount {
+				bestSuit = s
+				bestCount = counts[s]
+			}
+		}
+	}
+	var picks [3]tile.Tile
+	n := 0
+	for i := bestSuit * 9; i < (bestSuit+1)*9 && n < 3; i++ {
+		for j := 0; j < c[i] && n < 3; j++ {
+			picks[n] = tile.Tile(i)
+			n++
+		}
+	}
+	return picks
+}
+
 // AlwaysRon picks the ron call from opportunities, else returns Pass.
 // Shared default for "I always take the win" bots.
 func AlwaysRon(opps []game.Call) game.Call {

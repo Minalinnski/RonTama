@@ -96,6 +96,30 @@ func renderHandWithKeyHints(tiles []tile.Tile, drawnIdx, selectedIdx int) string
 	return lipgloss.JoinVertical(lipgloss.Left, hand, hintRow)
 }
 
+// renderHandMulti renders the hand with multiple tiles highlighted
+// (used by 换三张 selection). selectedIdxs lists the tile-indices to mark.
+func renderHandMulti(tiles []tile.Tile, selectedIdxs []int) string {
+	picked := map[int]bool{}
+	for _, i := range selectedIdxs {
+		picked[i] = true
+	}
+	keys := "123456789abcde"
+	var tileParts, keyParts []string
+	for i, t := range tiles {
+		tileParts = append(tileParts, renderTileBox(t, picked[i]))
+		ch := byte('?')
+		if i < len(keys) {
+			ch = keys[i]
+		}
+		keyParts = append(keyParts, lipgloss.NewStyle().
+			Foreground(chromeColor).
+			Render(fmt.Sprintf(" %c  ", ch)))
+	}
+	hand := lipgloss.JoinHorizontal(lipgloss.Top, tileParts...)
+	keyRow := lipgloss.JoinHorizontal(lipgloss.Top, keyParts...)
+	return lipgloss.JoinVertical(lipgloss.Left, hand, keyRow)
+}
+
 // renderHandSplit renders the concealed hand with the drawn tile
 // segregated on the FAR RIGHT — separated by a small gap, not sorted
 // into the rest. selectedIdx points into the combined slice

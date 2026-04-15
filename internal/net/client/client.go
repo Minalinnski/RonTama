@@ -31,7 +31,8 @@ type Decider interface {
 	// HandleStateUpdate is called for every StateUpdate the client receives.
 	HandleStateUpdate(upd proto.StateUpdate)
 
-	// AnswerDingque/AnswerDraw/AnswerCall produce responses for prompts.
+	// AnswerExchange3/AnswerDingque/AnswerDraw/AnswerCall produce responses for prompts.
+	AnswerExchange3(req proto.AskExchange3) [3]tile.Tile
 	AnswerDingque(req proto.AskDingque) tile.Suit
 	AnswerDraw(req proto.AskDraw) game.DrawAction
 	AnswerCall(req proto.AskCall) game.Call
@@ -107,6 +108,13 @@ func (c *Client) dispatch(env proto.Envelope) error {
 			return err
 		}
 		c.decider.HandleStateUpdate(u)
+	case proto.KindAskExchange3:
+		var r proto.AskExchange3
+		if err := proto.DecodeBody(env, &r); err != nil {
+			return err
+		}
+		ans := c.decider.AnswerExchange3(r)
+		return c.send(proto.KindAnswerExchange3, proto.AnswerExchange3{Tiles: ans})
 	case proto.KindAskDingque:
 		var r proto.AskDingque
 		if err := proto.DecodeBody(env, &r); err != nil {
@@ -189,6 +197,16 @@ func NewHeadlessDecider(bot game.Player, rule rules.RuleSet) *HeadlessDecider {
 
 // AssignSeat implements Decider.
 func (d *HeadlessDecider) AssignSeat(seat int, _ string) { d.seat = seat }
+
+// AnswerExchange3 implements Decider.
+func (d *HeadlessDecider) AnswerExchange3(req proto.AskExchange3) [3]tile.Tile {
+	view := game.PlayerView{
+		Rule:    d.rule,
+		Seat:    d.seat,
+		OwnHand: tile.Hand{Concealed: req.OwnHand},
+	}
+	return d.bot.ChooseExchange3(view)
+}
 
 // HandleStateUpdate implements Decider.
 func (d *HeadlessDecider) HandleStateUpdate(upd proto.StateUpdate) {

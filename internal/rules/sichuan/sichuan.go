@@ -61,6 +61,9 @@ func (Rule) AllowsChi() bool { return false }
 // RequiresDingque is true.
 func (Rule) RequiresDingque() bool { return true }
 
+// RequiresExchange3 is true (换三张).
+func (Rule) RequiresExchange3() bool { return true }
+
 // CanWin checks Sichuan agari validity.
 //
 // Requirements:

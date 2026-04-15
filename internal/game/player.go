@@ -9,9 +9,15 @@ type Player interface {
 	// Name is a stable identifier used in logs.
 	Name() string
 
-	// ChooseDingque is called once at round start (Sichuan only).
-	// Implementations should pick the suit with the fewest / weakest
-	// holdings. For non-Sichuan rules this is never called.
+	// ChooseExchange3 is called once at round start when the rule
+	// requires 换三张 (Sichuan). Returns 3 tiles of one suit to pass.
+	// Caller validates same-suit + tiles-in-hand and panics on bad
+	// returns; bots / clients should always honour the contract.
+	ChooseExchange3(view PlayerView) [3]tile.Tile
+
+	// ChooseDingque is called once at round start (Sichuan only),
+	// AFTER ChooseExchange3 has settled. The hand passed via view
+	// reflects the post-exchange tiles.
 	ChooseDingque(view PlayerView) tile.Suit
 
 	// OnDraw is called after this player draws a tile (the draw is

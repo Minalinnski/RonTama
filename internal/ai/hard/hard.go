@@ -40,6 +40,11 @@ func (b *Bot) Name() string {
 	return b.N
 }
 
+// ChooseExchange3 implements game.Player.
+func (b *Bot) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
+	return ai.PickExchange3(view)
+}
+
 // ChooseDingque uses Medium's structural-value policy.
 func (b *Bot) ChooseDingque(view game.PlayerView) tile.Suit {
 	return medium.New(b.N).ChooseDingque(view)

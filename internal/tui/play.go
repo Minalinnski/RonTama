@@ -41,16 +41,17 @@ type RoundDoneMsg struct {
 
 // PlayModel is the interactive play TUI's Bubble Tea model.
 type PlayModel struct {
-	rule       rules.RuleSet
-	state      *game.State
-	prompt     *HumanPromptMsg
-	selected   int // index in own concealed hand (or 0..n-1 + drawn)
-	log        []string
-	width      int
-	height     int
-	roundDone  bool
-	finalNote  string
-	quitting   bool
+	rule      rules.RuleSet
+	state     *game.State
+	prompt    *HumanPromptMsg
+	selected  int   // single-select index (draw prompt) — 0..n-1 + drawn slot
+	exchSet   []int // multi-select indices into the sorted hand (exchange3 prompt)
+	log       []string
+	width     int
+	height    int
+	roundDone bool
+	finalNote string
+	quitting  bool
 }
 
 // NewPlayModel constructs a fresh PlayModel.
@@ -83,13 +84,18 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HumanPromptMsg:
 		p := msg
 		m.prompt = &p
-		// On a draw prompt with a drawn tile, default-select the drawn
-		// tile (rightmost slot). On a post-call discard or no-draw,
-		// start at index 0.
-		if msg.Kind == "draw" && msg.View.JustDrew != nil {
-			sorted, _ := splitDrawn(msg.View.OwnHand, msg.View.JustDrew)
-			m.selected = len(sorted) // index of the drawn tile in the split layout
-		} else {
+		switch msg.Kind {
+		case "draw":
+			if msg.View.JustDrew != nil {
+				sorted, _ := splitDrawn(msg.View.OwnHand, msg.View.JustDrew)
+				m.selected = len(sorted) // default-select the drawn tile (rightmost)
+			} else {
+				m.selected = 0
+			}
+		case "exchange3":
+			m.exchSet = nil
+			m.selected = 0
+		default:
 			m.selected = 0
 		}
 		return m, nil
@@ -115,6 +121,8 @@ func (m PlayModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch m.prompt.Kind {
+	case "exchange3":
+		return m.handleExchange3Key(msg)
 	case "dingque":
 		return m.handleDingqueKey(msg)
 	case "draw":
@@ -123,6 +131,62 @@ func (m PlayModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCallKey(msg)
 	}
 	return m, nil
+}
+
+// handleExchange3Key implements the multi-select picker for 换三张:
+// digit/letter keys toggle inclusion; space confirms when exactly 3
+// same-suit tiles are picked.
+func (m PlayModel) handleExchange3Key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	tiles := m.prompt.View.OwnHand.ConcealedTiles()
+	s := msg.String()
+	if len(s) == 1 {
+		c := s[0]
+		idx := -1
+		switch {
+		case c >= '1' && c <= '9':
+			idx = int(c - '1')
+		case c >= 'a' && c <= 'e':
+			idx = 9 + int(c-'a')
+		}
+		if idx >= 0 && idx < len(tiles) {
+			m.exchSet = toggle(m.exchSet, idx)
+			return m, nil
+		}
+	}
+	switch s {
+	case "backspace", "esc":
+		m.exchSet = nil
+		return m, nil
+	case " ", "enter":
+		if len(m.exchSet) != 3 {
+			return m, nil // need exactly 3
+		}
+		// Validate same suit.
+		suit := tiles[m.exchSet[0]].Suit()
+		for _, i := range m.exchSet {
+			if tiles[i].Suit() != suit {
+				return m, nil // ignore — UI status hint will explain
+			}
+		}
+		var picks [3]tile.Tile
+		for i, idx := range m.exchSet {
+			picks[i] = tiles[idx]
+		}
+		m.prompt.Respond <- picks
+		m.prompt = nil
+		m.exchSet = nil
+	}
+	return m, nil
+}
+
+// toggle adds/removes idx from the slice, preserving order.
+func toggle(set []int, idx int) []int {
+	for i, v := range set {
+		if v == idx {
+			return append(set[:i], set[i+1:]...)
+		}
+	}
+	return append(set, idx)
 }
 
 func (m PlayModel) handleDingqueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -449,11 +513,21 @@ func (m PlayModel) renderSelfPanel(width int) string {
 // renderHandRow renders the human's concealed hand as boxed tiles
 // below the table. The just-drawn tile is shown on the FAR RIGHT,
 // separated by a gap, and never auto-sorted into the rest.
+//
+// Exchange-three mode: hand is rendered with multi-select highlighting
+// of m.exchSet entries; the drawn-tile slot is suppressed (no draws
+// happen during the exchange phase).
 func (m PlayModel) renderHandRow() string {
 	st := m.state
 	p := st.Players[HumanSeat]
-	sorted, drawn := splitDrawn(p.Hand, p.JustDrew)
 
+	if m.prompt != nil && m.prompt.Kind == "exchange3" {
+		tiles := m.prompt.View.OwnHand.ConcealedTiles()
+		hand := renderHandMulti(tiles, m.exchSet)
+		return lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, hand)
+	}
+
+	sorted, drawn := splitDrawn(p.Hand, p.JustDrew)
 	sel := -1
 	if m.prompt != nil && m.prompt.Kind == "draw" {
 		sel = m.selected
@@ -587,6 +661,28 @@ func (m PlayModel) renderPrompt() string {
 		return chromeStyle.Render("(bots playing… press q to quit)")
 	}
 	switch m.prompt.Kind {
+	case "exchange3":
+		tiles := m.prompt.View.OwnHand.ConcealedTiles()
+		picked := len(m.exchSet)
+		hint := ""
+		if picked == 3 {
+			suit := tiles[m.exchSet[0]].Suit()
+			ok := true
+			for _, i := range m.exchSet {
+				if tiles[i].Suit() != suit {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				hint = "  ✓ press space to confirm"
+			} else {
+				hint = "  ✗ all 3 must be the same suit"
+			}
+		}
+		return promptStyle.Render(fmt.Sprintf(
+			"换三张: pick 3 tiles of ONE suit (1-9/a-e to toggle, esc to clear)  selected: %d/3%s",
+			picked, hint))
 	case "dingque":
 		return promptStyle.Render("Choose 缺 suit:  m=萬  p=筒  s=索")
 	case "draw":

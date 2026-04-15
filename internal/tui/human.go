@@ -34,6 +34,48 @@ func (h *HumanPlayer) Name() string {
 	return h.N
 }
 
+// ChooseExchange3 prompts the UI for 3 tiles of one suit.
+func (h *HumanPlayer) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
+	resp := make(chan any, 1)
+	h.Prog.Send(HumanPromptMsg{Kind: "exchange3", View: view, Respond: resp})
+	v := <-resp
+	picks, ok := v.([3]tile.Tile)
+	if !ok {
+		// fallback: use the easy strategy (suit with fewest tiles)
+		return fallbackExchange3(view)
+	}
+	return picks
+}
+
+// fallbackExchange3 mirrors the ai.PickExchange3 strategy without the
+// import (avoids tui→ai cycle).
+func fallbackExchange3(view game.PlayerView) [3]tile.Tile {
+	c := view.OwnHand.Concealed
+	counts := [3]int{}
+	for s := 0; s < 3; s++ {
+		for n := 0; n < 9; n++ {
+			counts[s] += c[s*9+n]
+		}
+	}
+	bestSuit := 0
+	bestCount := counts[0]
+	for s := 1; s < 3; s++ {
+		if counts[s] >= 3 && (counts[s] < bestCount || bestCount < 3) {
+			bestSuit = s
+			bestCount = counts[s]
+		}
+	}
+	var picks [3]tile.Tile
+	n := 0
+	for i := bestSuit * 9; i < (bestSuit+1)*9 && n < 3; i++ {
+		for j := 0; j < c[i] && n < 3; j++ {
+			picks[n] = tile.Tile(i)
+			n++
+		}
+	}
+	return picks
+}
+
 // ChooseDingque implements game.Player by prompting the UI.
 func (h *HumanPlayer) ChooseDingque(view game.PlayerView) tile.Suit {
 	resp := make(chan any, 1)
@@ -88,6 +130,11 @@ func NewTUIObserver(p *tea.Program) *TUIObserver { return &TUIObserver{Prog: p} 
 
 func (o *TUIObserver) OnRoundStart(s *game.State) {
 	o.Prog.Send(EventMsg{State: s, Note: "Round start"})
+}
+
+func (o *TUIObserver) OnExchange3(s *game.State, picks [game.NumPlayers][3]tile.Tile, direction int) {
+	dir := []string{"", "→ next", "↔ across", "← prev"}[direction]
+	o.Prog.Send(EventMsg{State: s, Note: "换三张 " + dir})
 }
 
 func (o *TUIObserver) OnDingque(s *game.State, seat int, suit tile.Suit) {

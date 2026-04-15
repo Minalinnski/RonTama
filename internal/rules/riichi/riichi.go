@@ -57,6 +57,9 @@ func (Rule) AllowsChi() bool { return true }
 // RequiresDingque is false.
 func (Rule) RequiresDingque() bool { return false }
 
+// RequiresExchange3 is false.
+func (Rule) RequiresExchange3() bool { return false }
+
 // CanWin returns true if hand+winningTile is a standard, chiitoi, or
 // kokushi shape AND has at least one yaku (otherwise no-yaku → no-win).
 func (r Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bool {

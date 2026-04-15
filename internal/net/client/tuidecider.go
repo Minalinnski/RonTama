@@ -62,6 +62,22 @@ func (d *TUIDecider) HandleStateUpdate(upd proto.StateUpdate) {
 	d.Prog.Send(tui.EventMsg{State: st, Note: upd.Note})
 }
 
+// AnswerExchange3 blocks on the TUI for an exchange-three pick.
+func (d *TUIDecider) AnswerExchange3(req proto.AskExchange3) [3]tile.Tile {
+	resp := make(chan any, 1)
+	view := game.PlayerView{
+		Rule:    d.Rule,
+		Seat:    d.seat,
+		OwnHand: tile.Hand{Concealed: req.OwnHand},
+	}
+	d.Prog.Send(tui.HumanPromptMsg{Kind: "exchange3", View: view, Respond: resp})
+	v := <-resp
+	if picks, ok := v.([3]tile.Tile); ok {
+		return picks
+	}
+	return [3]tile.Tile{}
+}
+
 // AnswerDingque blocks on the TUI for a suit choice.
 func (d *TUIDecider) AnswerDingque(req proto.AskDingque) tile.Suit {
 	resp := make(chan any, 1)

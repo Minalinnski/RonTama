@@ -1,6 +1,7 @@
 package game
 
 import (
+	cryptoRand "crypto/rand"
 	"fmt"
 	"log/slog"
 
@@ -15,6 +16,19 @@ func shantenAfter(c [tile.NumKinds]int, melds int) int {
 	return shanten.Of(c, melds)
 }
 
+// tileRandIntN: uniform [0, n). Modulo bias is negligible for the
+// small n values used here (direction = 3).
+func tileRandIntN(n int) (int, error) {
+	if n <= 0 {
+		return 0, fmt.Errorf("tileRandIntN: n must be positive")
+	}
+	var b [1]byte
+	if _, err := cryptoRand.Read(b[:]); err != nil {
+		return 0, err
+	}
+	return int(b[0]) % n, nil
+}
+
 // RoundResult summarises one round's outcome.
 type RoundResult struct {
 	Wins        []WinEvent
@@ -27,6 +41,7 @@ type RoundResult struct {
 // this to drive view updates without polling the State.
 type Observer interface {
 	OnRoundStart(s *State)
+	OnExchange3(s *State, picks [NumPlayers][3]tile.Tile, direction int)
 	OnDingque(s *State, seat int, suit tile.Suit)
 	OnDraw(s *State, seat int, t tile.Tile)
 	OnDiscard(s *State, seat int, t tile.Tile)
@@ -38,13 +53,14 @@ type Observer interface {
 // NoopObserver implements Observer with empty methods.
 type NoopObserver struct{}
 
-func (NoopObserver) OnRoundStart(*State)                                {}
-func (NoopObserver) OnDingque(*State, int, tile.Suit)                   {}
-func (NoopObserver) OnDraw(*State, int, tile.Tile)                      {}
-func (NoopObserver) OnDiscard(*State, int, tile.Tile)                   {}
-func (NoopObserver) OnCall(*State, CallKind, int, int, tile.Tile)       {}
-func (NoopObserver) OnWin(*State, WinEvent)                             {}
-func (NoopObserver) OnRoundEnd(*State, *RoundResult)                    {}
+func (NoopObserver) OnRoundStart(*State)                                       {}
+func (NoopObserver) OnExchange3(*State, [NumPlayers][3]tile.Tile, int)         {}
+func (NoopObserver) OnDingque(*State, int, tile.Suit)                          {}
+func (NoopObserver) OnDraw(*State, int, tile.Tile)                             {}
+func (NoopObserver) OnDiscard(*State, int, tile.Tile)                          {}
+func (NoopObserver) OnCall(*State, CallKind, int, int, tile.Tile)              {}
+func (NoopObserver) OnWin(*State, WinEvent)                                    {}
+func (NoopObserver) OnRoundEnd(*State, *RoundResult)                           {}
 
 // WinEvent records one player's win during the round.
 type WinEvent struct {
@@ -76,7 +92,36 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 	}
 	obs.OnRoundStart(st)
 
-	// Phase 1: dingque (Sichuan).
+	// Phase 1a: exchange-three (Sichuan 换三张). Each player picks 3
+	// tiles of one suit; a randomly chosen direction (left/right/across)
+	// shifts them. Direction is the same for all 4 seats this round.
+	if rule.RequiresExchange3() {
+		direction, err := pickExchangeDirection()
+		if err != nil {
+			return nil, err
+		}
+		var picks [NumPlayers][3]tile.Tile
+		for seat := 0; seat < NumPlayers; seat++ {
+			picks[seat] = players[seat].ChooseExchange3(st.View(seat))
+			if err := validateExchange3(st, seat, picks[seat]); err != nil {
+				return nil, fmt.Errorf("seat %d invalid exchange-3: %w", seat, err)
+			}
+			for _, t := range picks[seat] {
+				st.Players[seat].Hand.Remove(t)
+			}
+		}
+		// Distribute (each seat receives from seat - direction mod 4).
+		for seat := 0; seat < NumPlayers; seat++ {
+			source := (seat - direction + NumPlayers) % NumPlayers
+			for _, t := range picks[source] {
+				st.Players[seat].Hand.Add(t)
+			}
+		}
+		obs.OnExchange3(st, picks, direction)
+		log.Debug("exchange3 applied", "direction", direction)
+	}
+
+	// Phase 1b: dingque (Sichuan).
 	if rule.RequiresDingque() {
 		for seat := 0; seat < NumPlayers; seat++ {
 			ds := players[seat].ChooseDingque(st.View(seat))
@@ -323,6 +368,42 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		}
 	}
 	return callResolution{nextSeat: -1}
+}
+
+// pickExchangeDirection picks 1 (left), 2 (across), or 3 (right) at
+// random using the wall's crypto/rand pathway via tile.NewWall... we
+// just need a uniform 1..3.
+func pickExchangeDirection() (int, error) {
+	// 1, 2, or 3 — no zero, since 0 would be self.
+	idx, err := tileRandIntN(3)
+	if err != nil {
+		return 0, fmt.Errorf("exchange direction rand: %w", err)
+	}
+	return idx + 1, nil
+}
+
+// validateExchange3 enforces: same suit, no honors, all 3 tiles in hand.
+func validateExchange3(st *State, seat int, picks [3]tile.Tile) error {
+	suit := picks[0].Suit()
+	if suit != tile.SuitMan && suit != tile.SuitPin && suit != tile.SuitSou {
+		return fmt.Errorf("exchange tile must be a suit tile")
+	}
+	for _, t := range picks {
+		if t.Suit() != suit {
+			return fmt.Errorf("exchange tiles must be same suit")
+		}
+	}
+	// Count occurrences in picks vs hand.
+	need := [tile.NumKinds]int{}
+	for _, t := range picks {
+		need[t]++
+	}
+	for i, n := range need {
+		if n > st.Players[seat].Hand.Concealed[i] {
+			return fmt.Errorf("not enough %s in hand for exchange", tile.Tile(i))
+		}
+	}
+	return nil
 }
 
 // validateRiichiDeclaration checks that seat may declare riichi by

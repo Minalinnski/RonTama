@@ -35,6 +35,11 @@ func (b *Bot) Name() string {
 	return b.N
 }
 
+// ChooseExchange3 implements game.Player. Same picking strategy as Easy.
+func (b *Bot) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
+	return ai.PickExchange3(view)
+}
+
 // ChooseDingque considers both tile count and structural value (pairs,
 // adjacent tiles). Lower score = better dingque candidate.
 func (b *Bot) ChooseDingque(view game.PlayerView) tile.Suit {
