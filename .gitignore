@@ -1,0 +1,22 @@
+# Binaries
+/rontama
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# GoReleaser
+/dist/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
