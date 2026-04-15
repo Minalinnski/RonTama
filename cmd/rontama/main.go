@@ -78,8 +78,10 @@ Usage:
                        compare bot tiers over N rounds
   rontama serve [-port 7777] [-timeout 30s]
                        host a Sichuan game over LAN; empty seats fill with Easy bots
-  rontama join [-addr host:port]
-                       connect to a server (mDNS auto-discover by default) as a headless Easy bot
+  rontama join [-addr host:port] [-rule sichuan|riichi] [-bot]
+                       connect to a server (mDNS auto-discover by default).
+                       default: launch interactive TUI for seat 0.
+                       -bot: headless Easy bot (testing / seat-filling)
   rontama version      print build version
 `)
 }

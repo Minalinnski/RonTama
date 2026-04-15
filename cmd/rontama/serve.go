@@ -50,13 +50,15 @@ func runServe(args []string) error {
 	return nil
 }
 
-// runJoin connects to a server (auto-discover or explicit address) and
-// plays as a headless Easy bot. TUI integration over the network is
-// follow-up work.
+// runJoin connects to a server (auto-discover or explicit address).
+// Default is interactive TUI; pass -bot to play as a headless Easy bot
+// (useful for testing or filling seats).
 func runJoin(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ExitOnError)
 	addr := fs.String("addr", "", "host:port of server (empty = mDNS discover)")
 	browseTimeout := fs.Duration("discover", 3*time.Second, "mDNS discovery timeout")
+	headless := fs.Bool("bot", false, "join as a headless Easy bot instead of launching the TUI")
+	ruleName := fs.String("rule", "sichuan", "rule set the server is hosting (sichuan | riichi)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -83,5 +85,12 @@ func runJoin(args []string) error {
 		log.Info("connecting to first match", "addr", target)
 	}
 
-	return joinAsHeadlessBot(target, log)
+	rule, err := pickRule(*ruleName)
+	if err != nil {
+		return err
+	}
+	if *headless {
+		return joinAsHeadlessBot(target, rule, log)
+	}
+	return joinAsTUI(target, rule, log)
 }
