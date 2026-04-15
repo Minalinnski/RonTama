@@ -83,11 +83,12 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HumanPromptMsg:
 		p := msg
 		m.prompt = &p
-		// Reset selected index to point at last drawn tile if any.
+		// On a draw prompt with a drawn tile, default-select the drawn
+		// tile (rightmost slot). On a post-call discard or no-draw,
+		// start at index 0.
 		if msg.Kind == "draw" && msg.View.JustDrew != nil {
-			tiles := msg.View.OwnHand.ConcealedTiles()
-			m.selected = len(tiles) - 1
-			// If JustDrew is at the end (it's added then sorted), put cursor on it.
+			sorted, _ := splitDrawn(msg.View.OwnHand, msg.View.JustDrew)
+			m.selected = len(sorted) // index of the drawn tile in the split layout
 		} else {
 			m.selected = 0
 		}
@@ -142,11 +143,13 @@ func (m PlayModel) handleDingqueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	tiles := m.prompt.View.OwnHand.ConcealedTiles()
-	maxIdx := len(tiles) - 1
+	sorted, drawn := splitDrawn(m.prompt.View.OwnHand, m.prompt.View.JustDrew)
+	maxIdx := len(sorted) - 1
+	if drawn != nil {
+		maxIdx++
+	}
 
 	s := msg.String()
-	// Number / letter quick-select: 1..9 → 0..8, a..e → 9..13.
 	if len(s) == 1 {
 		c := s[0]
 		idx := -1
@@ -175,11 +178,17 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 		m.prompt = nil
 	case " ", "enter":
-		if m.selected >= 0 && m.selected <= maxIdx {
-			discard := tiles[m.selected]
-			m.prompt.Respond <- game.DrawAction{Kind: game.DrawDiscard, Discard: discard}
-			m.prompt = nil
+		if m.selected < 0 || m.selected > maxIdx {
+			break
 		}
+		var discard tile.Tile
+		if m.selected < len(sorted) {
+			discard = sorted[m.selected]
+		} else if drawn != nil {
+			discard = *drawn
+		}
+		m.prompt.Respond <- game.DrawAction{Kind: game.DrawDiscard, Discard: discard}
+		m.prompt = nil
 	}
 	return m, nil
 }
@@ -215,36 +224,62 @@ func (m PlayModel) handleCallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
+//
+// Layout: 3-row × 3-column grid where each cell is a bordered panel.
+//
+//	┌─────┐  ┌──────────┐  ┌─────┐
+//	│     │  │  N seat  │  │     │
+//	└─────┘  └──────────┘  └─────┘
+//	┌──────┐ ┌──────────┐  ┌──────┐
+//	│ W    │ │  TABLE   │  │  E   │
+//	│ seat │ │  (wall)  │  │ seat │
+//	└──────┘ └──────────┘  └──────┘
+//	┌─────┐  ┌──────────┐  ┌─────┐
+//	│     │  │  YOU     │  │     │
+//	└─────┘  └──────────┘  └─────┘
+//
+// Corners are blank spacers. The current-turn seat's panel border is
+// highlighted in cyan.
 func (m PlayModel) View() string {
 	if m.state == nil {
 		return "Loading..."
 	}
 	header := m.renderHeader()
-	// True-table cross layout (you at the bottom, seat 0):
-	//   top    = seat 2 (across)         — info + river horizontally
-	//   left   = seat 3 (previous)       — info + vertical river
-	//   right  = seat 1 (next)           — info + vertical river
-	//   bottom = seat 0 (you)            — info + horizontal river + hand
-	tableTop := lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, m.renderTopSeat(2))
-	tableMid := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.renderSideSeat(3, true), // left
-		strings.Repeat(" ", 6),
-		m.renderCenterPanel(),
-		strings.Repeat(" ", 6),
-		m.renderSideSeat(1, false), // right
+
+	// Compute panel widths so the grid lines up.
+	const sideW = 24
+	const centerW = 30
+	const seatPanelW = 50
+
+	corner := lipgloss.NewStyle().Width(sideW).Render("")
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		corner,
+		lipgloss.PlaceHorizontal(centerW, lipgloss.Center, m.renderHorizSeatPanel(2, seatPanelW)),
+		corner,
 	)
-	tableBot := m.renderSelfBlock()
-	logBlock := m.renderLog()
+	midRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		m.renderVertSeatPanel(3, sideW),
+		lipgloss.PlaceHorizontal(centerW, lipgloss.Center, m.renderTablePanel(centerW-2)),
+		m.renderVertSeatPanel(1, sideW),
+	)
+	botRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		corner,
+		lipgloss.PlaceHorizontal(centerW, lipgloss.Center, m.renderSelfPanel(seatPanelW)),
+		corner,
+	)
+	table := lipgloss.JoinVertical(lipgloss.Left, topRow, "", midRow, "", botRow)
+	tableCentered := lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, table)
+
+	hand := m.renderHandRow()
 	prompt := m.renderPrompt()
+	logBlock := m.renderLog()
 
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		"",
-		tableTop,
+		tableCentered,
 		"",
-		tableMid,
-		"",
-		tableBot,
+		hand,
 		"",
 		prompt,
 		"",
@@ -286,36 +321,163 @@ func (m PlayModel) renderHeader() string {
 	return headerStyle.Render(strings.Join(parts, " | ") + "  Scores: " + strings.Join(scores, " "))
 }
 
-// renderTopSeat renders the across-table seat: info on one line with
-// the river spread horizontally below it.
-func (m PlayModel) renderTopSeat(seat int) string {
-	st := m.state
-	p := st.Players[seat]
-	mark := winMark(p.HasWon)
-	info := chromeStyle.Render(fmt.Sprintf("%s%s   Hand:%d   缺:%s   Melds:%s   Score:%+d",
-		seatLabel(seat), mark, p.Hand.ConcealedCount(),
-		dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
-	river := chromeStyle.Render("River: ") + renderRiver(st.Discards[seat], 18)
-	return lipgloss.JoinVertical(lipgloss.Center, info, river)
+// panelStyle returns the bordered style for a seat panel. If `current`
+// is true, uses the cyan turn-highlight border.
+func panelStyle(width int, current bool) lipgloss.Style {
+	bc := chromeColor
+	if current {
+		bc = turnColor
+	}
+	return lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(bc).
+		Padding(0, 1)
 }
 
-// renderSideSeat renders a left/right seat: 4-line info + vertical river.
-//
-// If alignLeft is true the river column is anchored to the left edge
-// (for the left seat); otherwise to the right (for the right seat).
-func (m PlayModel) renderSideSeat(seat int, alignLeft bool) string {
+// renderHorizSeatPanel renders the across-table seat (top of grid) as
+// a wide bordered panel with horizontal river.
+func (m PlayModel) renderHorizSeatPanel(seat, width int) string {
 	st := m.state
 	p := st.Players[seat]
-	mark := winMark(p.HasWon)
-	info := chromeStyle.Render(fmt.Sprintf("%s%s\nHand: %d\n缺:   %s\nMelds: %s\nScore: %+d",
-		seatLabel(seat), mark, p.Hand.ConcealedCount(),
-		dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
-	river := renderVerticalRiver(st.Discards[seat])
-	hAlign := lipgloss.Left
-	if !alignLeft {
-		hAlign = lipgloss.Right
+	current := st.Current == seat && !p.HasWon
+	titleColor := chromeColor
+	if current {
+		titleColor = turnColor
 	}
-	return lipgloss.JoinVertical(hAlign, info, "", river)
+	title := lipgloss.NewStyle().Bold(true).Foreground(titleColor).Render(
+		fmt.Sprintf("● %s%s", seatLabel(seat), winMark(p.HasWon)))
+	if !current {
+		title = lipgloss.NewStyle().Foreground(titleColor).Render(
+			fmt.Sprintf("  %s%s", seatLabel(seat), winMark(p.HasWon)))
+	}
+	info := chromeStyle.Render(fmt.Sprintf("Hand:%d  缺:%s  Score:%+d",
+		p.Hand.ConcealedCount(), dingqueLabel(p.Dingque), p.Score))
+	melds := chromeStyle.Render("Melds: ") + renderMelds(p.Hand.Melds)
+	riichi := ""
+	if p.Hand.Concealed[0] >= 0 && st.Riichi[seat] {
+		riichi = lipgloss.NewStyle().Foreground(winColor).Render(" 立")
+	}
+	if riichi != "" {
+		title = title + riichi
+	}
+	river := chromeStyle.Render("River: ") + renderRiver(st.Discards[seat], 16)
+	body := lipgloss.JoinVertical(lipgloss.Left, title, info, melds, river)
+	return panelStyle(width, current).Render(body)
+}
+
+// renderVertSeatPanel renders a side seat (left or right column) as a
+// narrow bordered panel with vertical river.
+func (m PlayModel) renderVertSeatPanel(seat, width int) string {
+	st := m.state
+	p := st.Players[seat]
+	current := st.Current == seat && !p.HasWon
+	titleColor := chromeColor
+	if current {
+		titleColor = turnColor
+	}
+	bullet := "  "
+	if current {
+		bullet = "● "
+	}
+	title := lipgloss.NewStyle().Bold(current).Foreground(titleColor).Render(
+		fmt.Sprintf("%s%s%s", bullet, seatLabel(seat), winMark(p.HasWon)))
+	if st.Riichi[seat] {
+		title = title + lipgloss.NewStyle().Foreground(winColor).Render(" 立")
+	}
+	info := chromeStyle.Render(fmt.Sprintf("Hand:%d  缺:%s\nScore:%+d",
+		p.Hand.ConcealedCount(), dingqueLabel(p.Dingque), p.Score))
+	melds := chromeStyle.Render("Melds: ") + renderMelds(p.Hand.Melds)
+	river := renderVerticalRiver(st.Discards[seat])
+	body := lipgloss.JoinVertical(lipgloss.Left, title, info, melds, "", river)
+	return panelStyle(width, current).Render(body)
+}
+
+// renderTablePanel is the centre "table" panel showing wall / round /
+// turn / pot information. Visually marked as the table to avoid being
+// mistaken for a seat.
+func (m PlayModel) renderTablePanel(width int) string {
+	st := m.state
+	rw := "東" // round wind (Phase 6 keeps it East)
+	header := lipgloss.NewStyle().Bold(true).Foreground(headerColor).Render("≡ TABLE ≡")
+	lines := []string{
+		header,
+		chromeStyle.Render(fmt.Sprintf("Wall:  %d", st.Wall.Remaining())),
+		chromeStyle.Render(fmt.Sprintf("Round: %s", rw)),
+		chromeStyle.Render(fmt.Sprintf("Turn:  %d", st.TurnsTaken)),
+	}
+	if st.RiichiPot > 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(winColor).Render(
+			fmt.Sprintf("Pot:   %d", st.RiichiPot)))
+	}
+	body := lipgloss.JoinVertical(lipgloss.Center, lines...)
+	return lipgloss.NewStyle().
+		Width(width).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(tableColor).
+		Padding(0, 1).
+		Render(body)
+}
+
+// renderSelfPanel renders the YOU panel (seat 0): just info + river.
+// The actual hand boxes are rendered separately below the table
+// (renderHandRow) so they can stretch full-width.
+func (m PlayModel) renderSelfPanel(width int) string {
+	st := m.state
+	p := st.Players[HumanSeat]
+	current := st.Current == HumanSeat && !p.HasWon
+	titleColor := chromeColor
+	if current {
+		titleColor = turnColor
+	}
+	bullet := "  "
+	if current {
+		bullet = "● "
+	}
+	title := lipgloss.NewStyle().Bold(current).Foreground(titleColor).Render(
+		fmt.Sprintf("%sYOU (%s)%s", bullet, seatLabel(HumanSeat), winMark(p.HasWon)))
+	if st.Riichi[HumanSeat] {
+		title = title + lipgloss.NewStyle().Foreground(winColor).Render(" 立")
+	}
+	info := chromeStyle.Render(fmt.Sprintf("缺:%s  Melds:%s  Score:%+d",
+		dingqueLabel(p.Dingque), renderMelds(p.Hand.Melds), p.Score))
+	river := chromeStyle.Render("River: ") + renderRiver(st.Discards[HumanSeat], 16)
+	body := lipgloss.JoinVertical(lipgloss.Left, title, info, river)
+	return panelStyle(width, current).Render(body)
+}
+
+// renderHandRow renders the human's concealed hand as boxed tiles
+// below the table. The just-drawn tile is shown on the FAR RIGHT,
+// separated by a gap, and never auto-sorted into the rest.
+func (m PlayModel) renderHandRow() string {
+	st := m.state
+	p := st.Players[HumanSeat]
+	sorted, drawn := splitDrawn(p.Hand, p.JustDrew)
+
+	sel := -1
+	if m.prompt != nil && m.prompt.Kind == "draw" {
+		sel = m.selected
+	}
+	hand := renderHandSplit(sorted, drawn, sel)
+	return lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, hand)
+}
+
+// splitDrawn partitions the hand into (sorted-without-drawn, drawn-tile).
+// If JustDrew is nil, returns (sorted-full-hand, nil).
+func splitDrawn(hand tile.Hand, drew *tile.Tile) (sorted []tile.Tile, drawn *tile.Tile) {
+	all := hand.ConcealedTiles()
+	if drew == nil {
+		return all, nil
+	}
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i] == *drew {
+			sorted = append([]tile.Tile{}, all[:i]...)
+			sorted = append(sorted, all[i+1:]...)
+			d := *drew
+			return sorted, &d
+		}
+	}
+	return all, nil
 }
 
 // renderVerticalRiver lays out a discard pile as a stacked column,

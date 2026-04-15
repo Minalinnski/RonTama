@@ -80,24 +80,57 @@ func renderHandWithKeyHints(tiles []tile.Tile, drawnIdx, selectedIdx int) string
 	// single character under each.
 	keys := "123456789abcde"
 	var hintParts []string
-	gap := false
 	for i := range tiles {
 		if i == drawnIdx && i > 0 {
 			hintParts = append(hintParts, " ")
-			gap = true
 		}
 		ch := byte('?')
 		if i < len(keys) {
 			ch = keys[i]
 		}
-		_ = gap
-		// "  c " width 4 to match the tile box width
 		hintParts = append(hintParts, lipgloss.NewStyle().
 			Foreground(chromeColor).
 			Render(fmt.Sprintf(" %c  ", ch)))
 	}
 	hintRow := lipgloss.JoinHorizontal(lipgloss.Top, hintParts...)
 	return lipgloss.JoinVertical(lipgloss.Left, hand, hintRow)
+}
+
+// renderHandSplit renders the concealed hand with the drawn tile
+// segregated on the FAR RIGHT — separated by a small gap, not sorted
+// into the rest. selectedIdx points into the combined slice
+// [sorted... drawn], so selectedIdx == len(sorted) means the drawn
+// tile is highlighted.
+//
+// Below each tile a key-hint character is rendered (1-9, a-e).
+func renderHandSplit(sorted []tile.Tile, drawn *tile.Tile, selectedIdx int) string {
+	keys := "123456789abcde"
+	var tileParts, keyParts []string
+	for i, t := range sorted {
+		tileParts = append(tileParts, renderTileBox(t, i == selectedIdx))
+		ch := byte('?')
+		if i < len(keys) {
+			ch = keys[i]
+		}
+		keyParts = append(keyParts, lipgloss.NewStyle().
+			Foreground(chromeColor).
+			Render(fmt.Sprintf(" %c  ", ch)))
+	}
+	if drawn != nil {
+		tileParts = append(tileParts, lipgloss.NewStyle().Foreground(chromeColor).Render("  "))
+		tileParts = append(tileParts, renderTileBox(*drawn, selectedIdx == len(sorted)))
+		keyParts = append(keyParts, "  ")
+		ch := byte('?')
+		if len(sorted) < len(keys) {
+			ch = keys[len(sorted)]
+		}
+		keyParts = append(keyParts, lipgloss.NewStyle().
+			Foreground(chromeColor).
+			Render(fmt.Sprintf(" %c  ", ch)))
+	}
+	hand := lipgloss.JoinHorizontal(lipgloss.Top, tileParts...)
+	keyRow := lipgloss.JoinHorizontal(lipgloss.Top, keyParts...)
+	return lipgloss.JoinVertical(lipgloss.Left, hand, keyRow)
 }
 
 // renderRiver renders a discard pile as compact tokens with line wrap.

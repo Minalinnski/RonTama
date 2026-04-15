@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -111,12 +112,26 @@ func (o *TUIObserver) OnCall(s *game.State, kind game.CallKind, seat, from int, 
 }
 
 func (o *TUIObserver) OnWin(s *game.State, w game.WinEvent) {
-	how := "tsumo"
+	o.Prog.Send(EventMsg{State: s, Note: formatWinNote(s, w)})
+}
+
+// formatWinNote builds a multi-line, prominent win announcement.
+func formatWinNote(s *game.State, w game.WinEvent) string {
+	how := "TSUMO"
 	if !w.Tsumo {
-		how = fmt.Sprintf("ron from %s", seatLabel(w.From))
+		how = fmt.Sprintf("RON from %s", seatLabel(w.From))
 	}
-	o.Prog.Send(EventMsg{State: s, Note: fmt.Sprintf("%s WINS via %s on %s [%v fan=%d]",
-		seatLabel(w.Seat), how, w.Tile, w.Score.Patterns, w.Score.Fan)})
+	hand := s.Players[w.Seat].Hand
+	handStr := hand.String()
+	if handStr == "" {
+		handStr = "(empty)"
+	}
+	patterns := "(no yaku?)"
+	if len(w.Score.Patterns) > 0 {
+		patterns = strings.Join(w.Score.Patterns, " · ")
+	}
+	return fmt.Sprintf("🎉 %s WINS — %s on %s   [%s]  %d han, base %d\n   Hand: %s + %s",
+		seatLabel(w.Seat), how, w.Tile, patterns, w.Score.Fan, w.Score.BasePts, handStr, w.Tile)
 }
 
 func (o *TUIObserver) OnRoundEnd(s *game.State, r *game.RoundResult) {

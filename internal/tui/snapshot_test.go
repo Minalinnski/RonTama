@@ -45,7 +45,7 @@ func TestSnapshot_FullView(t *testing.T) {
 	out := m.View()
 	t.Logf("\n%s", out)
 
-	for _, want := range []string{"Dealer", "Wall:", "You (East)", "缺", "drew 5p"} {
+	for _, want := range []string{"Dealer", "Wall:", "YOU (East)", "缺", "drew 5p"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered view missing %q", want)
 		}
