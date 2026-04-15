@@ -193,8 +193,7 @@ func TestBasePoints(t *testing.T) {
 
 func TestComputeFu_Chiitoitsu(t *testing.T) {
 	c := ctx(0, 0, true)
-	// chiitoi=true bypass should return 25.
-	got := computeFu([tile.NumKinds]int{}, nil, tile.Pin1, c, true, true)
+	got := computeFu([tile.NumKinds]int{}, nil, tile.Pin1, c, true, true, false)
 	if got != 25 {
 		t.Errorf("chiitoi fu = %d, want 25", got)
 	}
@@ -202,9 +201,8 @@ func TestComputeFu_Chiitoitsu(t *testing.T) {
 
 func TestComputeFu_BaseRoundedUp(t *testing.T) {
 	c := ctx(0, 0, true)
-	// All sequences, no triplets, no kanchan -> base 20 + 2 (tsumo) = 22 -> 30
 	hand := tile.Counts(tile.MustParseHand("123m 456p 789s 234m 22s"))
-	got := computeFu(hand, nil, tile.Sou2, c, true, false)
+	got := computeFu(hand, nil, tile.Sou2, c, true, false, false)
 	if got != 30 {
 		t.Errorf("simple all-runs tsumo fu = %d, want 30", got)
 	}

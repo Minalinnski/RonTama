@@ -77,8 +77,16 @@ internal/
 
 见 git log + README roadmap。
 
-## 已知 TODO（不影响阶段推进）
+## 已知 TODO（不影响主流程）
 
-- **Bot 强度未对齐难度名**：Phase 3 实现了 Easy/Medium/Hard 三档不同策略，但在 Sichuan 血战的"先手为王"特性下，Medium 的"追求清一色"和 Hard 的"防守"实际拖慢了胡牌速度，1000 局对战中三档差异不明显。Phase 7 (bot 强化) 时再做 ML 风格的真正调优；现在的实现保证了三档各有不同代码路径，方便后续替换。
-- **call 后流程简化**：`internal/game/loop.go` 中 pon/kan 后没有正确处理"主叫者直接弃牌"流程，目前 call 之后会让主叫者再摸一张。Easy bot 永不 call，所以 Phase 2-3 测试不会触发。Phase 5 联机时统一修。
-- **Riichi MVP 仍缺**：平和 (pinfu) 役没有判定（需要完整结构分解）；wall 没有 dead wall 切分（dora indicators 由调用方传入）；Riichi 宣告机制还没接入 Player interface（目前只能通过 WinContext.Riichi 标志生效）；和满贯 kiriage / 5-han mangan 边界没特殊处理（直接走公式）。score 结算用了通用的 `BasePts*2` 不是真正的庄家/闲家不对称矩阵。Phase 7 / Phase 9 再补。
+**Bot tuning (Phase 7-style work, 远期)**
+- Easy/Medium/Hard 三档目前差异在 1000 局样本里看不太出来。要做到"硬碾压"需要真 EV / MCTS / Mortal 接入，不在本仓的 MVP 范围内。
+
+**Riichi 仍缺的小事**
+- Wall 还没切 dead wall（14 张），dora indicators 现在由调用方传入而不是 wall 自己管理。
+- 一发的判定是简化版（own next discard + 任何 call 都关窗），没分严格的"一巡内"窗口。
+- 庄家连庄 / 流局点数转移 / 本场棒 (honba) / 立直棒跨局结转：未实现，单回合就结算了。
+- 鸣牌后的"喰い替え"约束（pon/kan 后不能切回同种牌的对子）：未限制。
+
+**TUI multi-seat over network**
+- `client.TUIDecider` 假设服务端总是把 seat 0 分给当前客户端。多客户端同时玩时只有第一个连进来的人能用 TUI；其他人渲染会错位。要支持任意 seat，得把 `tui.HumanSeat` 从常量改成 PlayModel 字段。

@@ -90,6 +90,11 @@ func (Rule) evaluate(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext, st
 	if standard && isToitoi(combined, melds) {
 		addYaku("対々和", 2)
 	}
+	pinfu := false
+	if standard && concealed && isPinfu(combined, winTile, melds, ctx) {
+		addYaku("平和", 1)
+		pinfu = true
+	}
 
 	// Honitsu / Chinitsu (count subset).
 	switch suitPurity(combined, melds) {
@@ -135,7 +140,7 @@ func (Rule) evaluate(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext, st
 	}
 
 	// --- Fu ---
-	res.Fu = computeFu(combined, melds, winTile, ctx, concealed, chiitoi)
+	res.Fu = computeFu(combined, melds, winTile, ctx, concealed, chiitoi, pinfu)
 	return res
 }
 

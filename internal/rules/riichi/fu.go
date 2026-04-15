@@ -7,24 +7,34 @@ import (
 
 // computeFu computes the Riichi fu (符) for the hand.
 //
-// Standard formula (simplified MVP — full pinfu / kanchan-wait detail
-// would require structural decomposition; we apply the broad strokes):
+// Special cases:
 //
-//	chiitoitsu:                 25 fu (fixed)
+//	chiitoitsu:        25 fu (fixed)
+//	pinfu tsumo:       20 fu (fixed, no other bonuses)
+//	pinfu ron:         30 fu (concealed-ron bonus, no triplet bonuses)
+//
+// Otherwise the standard accumulation applies:
+//
 //	base:                        20 fu
-//	  + tsumo:                   +2 fu (unless pinfu — we don't detect pinfu here)
+//	  + tsumo:                   +2 fu
 //	  + ron concealed:           +10 fu
 //	  + each minkou (open trip): +2 (terminal/honor: +4)
 //	  + each ankou (concealed):  +4 (terminal/honor: +8)
 //	  + each minkan:             +8 (terminal/honor: +16)
 //	  + each ankan:              +16 (terminal/honor: +32)
 //	  + yakuhai pair:            +2
-//	  + (waits ignored — kanchan/penchan/tanki bonus +2 omitted)
+//	  + (kanchan/penchan/tanki +2 omitted — needs structural search)
 //
 // Result is rounded UP to the next multiple of 10.
-func computeFu(c [tile.NumKinds]int, melds []tile.Meld, winTile tile.Tile, ctx rules.WinContext, concealed bool, chiitoi bool) int {
+func computeFu(c [tile.NumKinds]int, melds []tile.Meld, winTile tile.Tile, ctx rules.WinContext, concealed bool, chiitoi, pinfu bool) int {
 	if chiitoi {
 		return 25
+	}
+	if pinfu {
+		if ctx.Tsumo {
+			return 20
+		}
+		return 30
 	}
 
 	fu := 20
