@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -39,27 +38,21 @@ func matchConfigFor(rule rules.RuleSet) (maxRounds int, renchan bool) {
 // If joining fails (connection refused, timeout, etc.), it loops back
 // to the lobby so the user can retry or pick a different option.
 func runLobbyFlow() error {
-	for {
-		res, err := tui.RunLobby()
-		if err != nil {
-			return err
-		}
-		switch res.Mode {
-		case tui.LobbyModeQuit:
-			return nil
-		case tui.LobbyModeLocal:
-			return runLobbyLocal(res)
-		case tui.LobbyModeHost:
-			return runLobbyHost(res)
-		case tui.LobbyModeJoin:
-			if err := runLobbyJoin(res); err != nil {
-				fmt.Fprintf(os.Stderr, "\n  连接失败: %v\n  按 Enter 回大厅重试...\n", err)
-				fmt.Scanln() // wait for user to read the error
-				continue     // back to lobby
-			}
-			return nil
-		}
+	res, err := tui.RunLobby()
+	if err != nil {
+		return err
 	}
+	switch res.Mode {
+	case tui.LobbyModeQuit:
+		return nil
+	case tui.LobbyModeLocal:
+		return runLobbyLocal(res)
+	case tui.LobbyModeHost:
+		return runLobbyHost(res)
+	case tui.LobbyModeJoin:
+		return runLobbyJoin(res)
+	}
+	return nil
 }
 
 // runLobbyLocal: single-process play, you at seat 0 + bots from lobby config.
@@ -144,17 +137,13 @@ func runLobbyHost(res tui.LobbyResult) error {
 	// 3. No race condition between server goroutine and TUI startup
 	ln, err := net.Listen("tcp", ":7777")
 	if err != nil {
-		return fmt.Errorf("listen :7777: %w\n(Tip: if macOS asks about firewall, click Allow and retry)", err)
+		return fmt.Errorf("listen :7777: %w (check if port is in use or macOS firewall is blocking)", err)
 	}
 	defer ln.Close()
-	fmt.Fprintf(os.Stderr, "✓ Server listening on :7777\n")
-	fmt.Fprintf(os.Stderr, "  If macOS asks about incoming connections, click Allow.\n")
-	fmt.Fprintf(os.Stderr, "  Starting TUI...\n")
 
-	// Small delay so the user can see the message + click Allow if needed.
-	time.Sleep(500 * time.Millisecond)
-
-	// Now launch TUI. ALL model fields set BEFORE NewProgram (Bubble Tea copies the value).
+	// No stderr prints or sleeps — go straight into the TUI.
+	// The Room view shows the IP; macOS firewall dialog (if any)
+	// appeared when net.Listen bound the port above.
 	startCh := make(chan struct{}, 1)
 	model := tui.NewPlayModel(rule)
 	model.StartChan = startCh
