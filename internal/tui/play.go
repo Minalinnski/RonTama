@@ -21,9 +21,14 @@ func computeShantenMin(c [tile.NumKinds]int, melds int) int {
 	return shanten.Of(c, melds)
 }
 
-// HumanSeat is fixed at seat 0 (South). The TUI human always plays
-// from the bottom of the table layout.
-const HumanSeat = 0
+// HumanSeat is the DEFAULT human seat (0 = first joiner). When a
+// network client joins as a different seat, SetHumanSeat overrides it.
+// The table rotates so YOUR seat is always rendered at the bottom.
+var HumanSeat = 0
+
+// SetHumanSeat sets the human's seat index. Called by TUIDecider
+// after receiving Hello.Seat from the server.
+func SetHumanSeat(seat int) { HumanSeat = seat }
 
 // EventMsg notifies the play model of a state change pushed by the
 // game goroutine via Observer hooks.
@@ -558,15 +563,19 @@ func (m PlayModel) View() string {
 	const seatPanelW = 50
 
 	corner := lipgloss.NewStyle().Width(sideW).Render("")
+	// Rotate seat positions so HumanSeat is always at the bottom.
+	across := (HumanSeat + 2) % 4
+	left := (HumanSeat + 3) % 4
+	right := (HumanSeat + 1) % 4
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top,
 		corner,
-		lipgloss.PlaceHorizontal(centerW, lipgloss.Center, m.renderHorizSeatPanel(2, seatPanelW)),
+		lipgloss.PlaceHorizontal(centerW, lipgloss.Center, m.renderHorizSeatPanel(across, seatPanelW)),
 		corner,
 	)
 	midRow := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.renderVertSeatPanel(3, sideW),
+		m.renderVertSeatPanel(left, sideW),
 		lipgloss.PlaceHorizontal(centerW, lipgloss.Center, m.renderTablePanel(centerW-2)),
-		m.renderVertSeatPanel(1, sideW),
+		m.renderVertSeatPanel(right, sideW),
 	)
 	botRow := lipgloss.JoinHorizontal(lipgloss.Top,
 		corner,

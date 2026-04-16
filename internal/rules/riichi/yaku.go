@@ -33,6 +33,39 @@ func (Rule) evaluate(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext, st
 	if standard && isDaisangen(combined, melds) {
 		res.Yakuman = append(res.Yakuman, "大三元")
 	}
+	// 緑一色 (ryuuiisou): all green tiles (2s,3s,4s,6s,8s + 發).
+	if isRyuuiisou(combined, melds) {
+		res.Yakuman = append(res.Yakuman, "緑一色")
+	}
+	// 字一色 (tsuuiisou): hand consists entirely of honor tiles.
+	if isTsuuiisou(combined, melds) {
+		res.Yakuman = append(res.Yakuman, "字一色")
+	}
+	// 大四喜 (daisushi): 4 wind triplets/kans.
+	if standard && isDaisushi(combined, melds) {
+		res.Yakuman = append(res.Yakuman, "大四喜")
+	}
+	// 小四喜 (shousushi): 3 wind triplets + 1 wind pair.
+	if standard && isShousushi(combined, melds) {
+		res.Yakuman = append(res.Yakuman, "小四喜")
+	}
+	// 四槓子 (suukantsu): 4 kans.
+	if isSuukantsu(melds) {
+		res.Yakuman = append(res.Yakuman, "四槓子")
+	}
+	// 九蓮宝燈 (chuuren poutou): 1112345678999 of one suit + any tile of that suit.
+	if standard && concealed && isChuuren(combined) {
+		res.Yakuman = append(res.Yakuman, "九蓮宝燈")
+	}
+	// 天和 (tenhou): dealer wins on the very first draw (turn == 1).
+	// TurnsTaken 0 means "unset/test default" — don't match.
+	if ctx.Tsumo && ctx.Seat == ctx.Dealer && ctx.TurnsTaken == 1 {
+		res.Yakuman = append(res.Yakuman, "天和")
+	}
+	// 地和 (chihou): non-dealer wins on first own draw (turn 2..4, no calls).
+	if ctx.Tsumo && ctx.Seat != ctx.Dealer && ctx.TurnsTaken >= 2 && ctx.TurnsTaken <= 4 && len(melds) == 0 {
+		res.Yakuman = append(res.Yakuman, "地和")
+	}
 	if len(res.Yakuman) > 0 {
 		// Yakuman wins: don't count regular yaku/dora.
 		res.Fu = 30 // unused for yakuman scoring but populate for display
@@ -417,6 +450,128 @@ func hasSanshokuDoukou(c [tile.NumKinds]int, melds []tile.Meld) bool {
 	}
 	for n := 0; n < 9; n++ {
 		if has[0][n] && has[1][n] && has[2][n] {
+			return true
+		}
+	}
+	return false
+}
+
+// isRyuuiisou: all tiles are "green" (2s,3s,4s,6s,8s,發).
+func isRyuuiisou(c [tile.NumKinds]int, melds []tile.Meld) bool {
+	green := map[tile.Tile]bool{
+		tile.Sou2: true, tile.Sou3: true, tile.Sou4: true,
+		tile.Sou6: true, tile.Sou8: true, tile.Green: true,
+	}
+	for i := 0; i < tile.NumKinds; i++ {
+		if c[i] > 0 && !green[tile.Tile(i)] {
+			return false
+		}
+	}
+	for _, m := range melds {
+		for _, t := range m.Tiles {
+			if !green[t] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isTsuuiisou: all tiles are honors (winds + dragons).
+func isTsuuiisou(c [tile.NumKinds]int, melds []tile.Meld) bool {
+	for i := 0; i < tile.NumKinds; i++ {
+		if c[i] > 0 && !tile.Tile(i).IsHonor() {
+			return false
+		}
+	}
+	for _, m := range melds {
+		for _, t := range m.Tiles {
+			if !t.IsHonor() {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isDaisushi: 4 wind triplets/kans (East + South + West + North all as triplets).
+func isDaisushi(c [tile.NumKinds]int, melds []tile.Meld) bool {
+	winds := []tile.Tile{tile.East, tile.South, tile.West, tile.North}
+	for _, w := range winds {
+		has := c[w] >= 3
+		for _, m := range melds {
+			if (m.Kind == tile.Pon || m.IsKan()) && len(m.Tiles) >= 3 && m.Tiles[0] == w {
+				has = true
+			}
+		}
+		if !has {
+			return false
+		}
+	}
+	return true
+}
+
+// isShousushi: 3 wind triplets + 1 wind pair.
+func isShousushi(c [tile.NumKinds]int, melds []tile.Meld) bool {
+	winds := []tile.Tile{tile.East, tile.South, tile.West, tile.North}
+	trips, pairs := 0, 0
+	for _, w := range winds {
+		has3 := c[w] >= 3
+		for _, m := range melds {
+			if (m.Kind == tile.Pon || m.IsKan()) && len(m.Tiles) >= 3 && m.Tiles[0] == w {
+				has3 = true
+			}
+		}
+		if has3 {
+			trips++
+		} else if c[w] == 2 {
+			pairs++
+		}
+	}
+	return trips == 3 && pairs == 1
+}
+
+// isSuukantsu: 4 kans (any combination of open/concealed/added).
+func isSuukantsu(melds []tile.Meld) bool {
+	kans := 0
+	for _, m := range melds {
+		if m.IsKan() {
+			kans++
+		}
+	}
+	return kans == 4
+}
+
+// isChuuren: 九蓮宝燈 — concealed hand of 1112345678999 + one extra of the
+// same suit. One of the rarest yakuman.
+func isChuuren(c [tile.NumKinds]int) bool {
+	for suit := 0; suit < 3; suit++ {
+		base := suit * 9
+		// Need at least: 3×1, 1×2, 1×3, 1×4, 1×5, 1×6, 1×7, 1×8, 3×9 = 13, plus 1 extra
+		if c[base+0] < 3 || c[base+8] < 3 {
+			continue
+		}
+		allPresent := true
+		total := 0
+		for n := 0; n < 9; n++ {
+			if c[base+n] < 1 {
+				allPresent = false
+				break
+			}
+			total += c[base+n]
+		}
+		if !allPresent || total != 14 {
+			continue
+		}
+		// Check: no tiles from other suits or honors.
+		otherTiles := false
+		for i := 0; i < tile.NumKinds; i++ {
+			if c[i] > 0 && (i < base || i >= base+9) {
+				otherTiles = true
+				break
+			}
+		}
+		if !otherTiles {
 			return true
 		}
 	}

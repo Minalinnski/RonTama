@@ -84,8 +84,9 @@ type WinContext struct {
 	Riichi           bool      // declared riichi this round
 	DoubleRiichi     bool      // declared riichi on first turn (W-riichi)
 	Ippatsu          bool      // win within one go-around of riichi declaration
-	DoraIndicators   []tile.Tile // visible dora indicators
+	DoraIndicators    []tile.Tile // visible dora indicators
 	UraDoraIndicators []tile.Tile // ura-dora indicators (revealed only on riichi win)
+	TurnsTaken        int        // turns elapsed (for 天和/地和)
 }
 
 // SeatWind returns the player's seat wind tile relative to the dealer.
@@ -162,9 +163,20 @@ type RuleHooks interface {
 	// Riichi: update furiten set, manage ippatsu countdown.
 	AfterDiscard(st StateAccessor, seat int, t tile.Tile)
 
-	// AfterCall is called after a pon/chi/kan is applied.
-	// Riichi: invalidate ippatsu for affected players.
-	AfterCall(st StateAccessor, kind CallKind, seat, from int)
+	// AfterCall is called after a pon/chi/kan is applied. Receives the
+	// called tile and supporting hand tiles so hooks can compute kuikae
+	// (喰い替え) restrictions internally.
+	// Riichi: invalidate ippatsu + set kuikae ban.
+	AfterCall(st StateAccessor, kind CallKind, seat, from int, calledTile tile.Tile, support []tile.Tile)
+
+	// OnRonPassed is called when a player was offered ron but chose to
+	// pass. Riichi: enters temporary furiten (can't ron ANY tile until
+	// their next draw).
+	OnRonPassed(st StateAccessor, seat int)
+
+	// OnPlayerDraw is called when a player draws a tile (before OnDraw
+	// decision). Riichi: clears temporary furiten for that player.
+	OnPlayerDraw(st StateAccessor, seat int)
 
 	// OnRoundEnd is called when the round finishes (win or exhaustion).
 	// Cleanup hook.

@@ -204,10 +204,12 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 			}
 			st.Current = seat
 		}
+		// Notify hooks that this player is drawing (clears temp furiten).
+		if hooks != nil {
+			hooks.OnPlayerDraw(st, seat)
+		}
 		var drawn tile.Tile
 		if st.skipNextDraw {
-			// Post-pon/chi: the caller absorbed the discarded tile via
-			// the meld, so don't pull from the wall. They must discard.
 			st.skipNextDraw = false
 			st.Players[seat].JustDrew = nil
 		} else if st.AfterKan {
@@ -365,9 +367,8 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 			obs.OnCall(st, CallKan, seat, seat, kt)
 			log.Debug("concealed-kan", "seat", seat, "tile", kt)
 			if hooks != nil {
-				hooks.AfterCall(st, toRulesCallKind(CallKan), seat, seat)
+				hooks.AfterCall(st, toRulesCallKind(CallKan), seat, seat, kt, nil)
 			}
-			// Kan-replacement draw: player draws from the back of the wall.
 			st.AfterKan = true
 			// Loop back to same seat's draw phase (the next iteration will
 			// draw from the back because AfterKan=true).
@@ -396,7 +397,7 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 			obs.OnCall(st, CallKan, seat, seat, kt)
 			log.Debug("added-kan", "seat", seat, "tile", kt)
 			if hooks != nil {
-				hooks.AfterCall(st, toRulesCallKind(CallKan), seat, seat)
+				hooks.AfterCall(st, toRulesCallKind(CallKan), seat, seat, kt, nil)
 			}
 			// TODO: other players get a kan-grab (抢杠胡) window here.
 			// For now skip straight to replacement draw.
@@ -443,7 +444,6 @@ func resolveCalls(hooks rules.RuleHooks, st *State, players [NumPlayers]Player, 
 		choice := players[player].OnCallOpportunity(view, discard, from, opts)
 		choices[player] = choice
 		if choice.Kind == CallRon {
-			// Find the matching ron Call from opts (Player + Kind match).
 			for _, c := range opts {
 				if c.Kind == CallRon {
 					declaredRons = append(declaredRons, c)
@@ -453,8 +453,25 @@ func resolveCalls(hooks rules.RuleHooks, st *State, players [NumPlayers]Player, 
 		}
 	}
 
+	// Temporary furiten: any player who was offered ron but DIDN'T take
+	// it enters temp-furiten (can't ron anything until their next draw).
+	if hooks != nil {
+		for player, opts := range byPlayer {
+			hadRonOption := false
+			for _, c := range opts {
+				if c.Kind == CallRon {
+					hadRonOption = true
+					break
+				}
+			}
+			if hadRonOption && choices[player].Kind != CallRon {
+				hooks.OnRonPassed(st, player)
+			}
+		}
+	}
+
 	if len(declaredRons) > 0 {
-		_ = choices // pon/kan/chi choices ignored when ron wins
+		_ = choices
 		out := callResolution{endRound: false}
 		for _, r := range declaredRons {
 			ctx := buildCtx(hooks, st, r.Player, discard, false, from)
@@ -510,7 +527,7 @@ func resolveCalls(hooks rules.RuleHooks, st *State, players [NumPlayers]Player, 
 		obs.OnCall(st, c.Kind, c.Player, from, discard)
 		log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
 		if hooks != nil {
-			hooks.AfterCall(st, toRulesCallKind(c.Kind), c.Player, from)
+			hooks.AfterCall(st, toRulesCallKind(c.Kind), c.Player, from, discard, c.Support)
 		} else {
 			for s := 0; s < NumPlayers; s++ {
 				st.IppatsuValid[s] = false

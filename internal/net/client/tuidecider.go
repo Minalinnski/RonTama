@@ -47,16 +47,18 @@ func NewTUIDecider(prog *tea.Program, rule rules.RuleSet) *TUIDecider {
 	return &TUIDecider{Prog: prog, Rule: rule}
 }
 
-// AssignSeat implements Decider.
+// AssignSeat implements Decider. Updates the global HumanSeat so the
+// TUI rotates the cross layout to put this seat at the bottom.
 func (d *TUIDecider) AssignSeat(seat int, _ string) {
 	d.mu.Lock()
 	d.seat = seat
 	d.mu.Unlock()
-	if seat != tui.HumanSeat {
-		// Inform the user — the TUI will still render but their seat
-		// won't match the visual "bottom" position.
-		d.Prog.Send(tui.EventMsg{Note: fmt.Sprintf("⚠ assigned seat %d (TUI is laid out for seat 0)", seat)})
-	}
+	tui.SetHumanSeat(seat)
+	d.Prog.Send(tui.EventMsg{Note: fmt.Sprintf("Assigned seat %d (%s)", seat, seatLabel(seat))})
+}
+
+func seatLabel(seat int) string {
+	return []string{"East", "South", "West", "North"}[seat%4]
 }
 
 // HandleStateUpdate implements Decider — synthesise a *game.State from

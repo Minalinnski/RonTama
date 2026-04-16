@@ -44,8 +44,17 @@ type Hooks struct {
 
 	// Kan-grab (抢杠胡): when a player declares added-kan, the tile is
 	// temporarily "grabbable" — other players get a one-shot ron window.
-	// Set in AfterCall, cleared after the ron-check pass.
 	kanGrabTile *tile.Tile
+
+	// Kuikae (喰い替え): after chi/pon, certain tiles cannot be discarded.
+	// Set in AfterCall, cleared on next draw. Map from seat → set of
+	// banned tile kinds.
+	kuikaeBan [4]map[tile.Tile]bool
+
+	// Temporary furiten (同巡振聴): when a player PASSES on a ron
+	// opportunity, they enter temp-furiten and cannot ron ANY tile
+	// until their next draw. Cleared when the player draws.
+	tempFuriten [4]bool
 }
 
 // NewHooks creates a new Hooks instance. Called once per round.
@@ -105,6 +114,7 @@ func (h *Hooks) BuildWinContext(st rules.StateAccessor, seat int, winTile tile.T
 		Ippatsu:           h.isIppatsuValid(st, seat),
 		DoraIndicators:    h.doraIndicators,
 		UraDoraIndicators: h.uraIndicators,
+		TurnsTaken:        st.GetTurnsTaken(),
 	}
 }
 
@@ -115,6 +125,10 @@ func (h *Hooks) CheckAction(st rules.StateAccessor, seat int, action rules.DrawA
 		if jd != nil && action.Discard != *jd {
 			return fmt.Errorf("riichi: must discard drawn tile (%s), not %s", *jd, action.Discard)
 		}
+	}
+	// Kuikae: after chi/pon, banned tiles cannot be discarded.
+	if action.Kind == 0 && h.kuikaeBan[seat] != nil && h.kuikaeBan[seat][action.Discard] {
+		return fmt.Errorf("kuikae: cannot discard %s after calling", action.Discard)
 	}
 	if action.DeclareRiichi {
 		return h.validateRiichi(st, seat, action.Discard)
@@ -138,9 +152,10 @@ func (h *Hooks) AvailableCalls(st rules.StateAccessor, discard tile.Tile, from i
 	// Filter.
 	var out []rules.Call
 	for _, c := range defaults {
-		// Furiten: can't ron a tile you've previously discarded.
+		// Furiten: can't ron a tile you've previously discarded (own-discard
+		// furiten) OR if you're in temporary furiten (passed on a ron this turn).
 		if c.Kind == rules.CallRon {
-			if h.isFuriten(c.Player, discard) {
+			if h.isFuriten(c.Player, discard) || h.tempFuriten[c.Player] {
 				continue
 			}
 		}
@@ -167,16 +182,51 @@ func (h *Hooks) AfterDiscard(st rules.StateAccessor, seat int, t tile.Tile) {
 	}
 }
 
-// AfterCall invalidates ippatsu for all riichi'd players (a call breaks
-// the uninterrupted rotation that ippatsu requires).
-// For added-kan calls, sets the kan-grab tile so BuildWinContext can
-// detect 抢杠胡.
-func (h *Hooks) AfterCall(_ rules.StateAccessor, kind rules.CallKind, seat, _ int) {
+// AfterCall invalidates ippatsu and sets kuikae restrictions.
+func (h *Hooks) AfterCall(_ rules.StateAccessor, kind rules.CallKind, seat, _ int, calledTile tile.Tile, support []tile.Tile) {
 	for i := range h.ippatsuAt {
 		h.ippatsuAt[i] = -1
 	}
-	// Clear any previous kan-grab.
 	h.kanGrabTile = nil
+	h.kuikaeBan[seat] = nil
+	// Kuikae (喰い替え): compute the banned discard set.
+	if kind == rules.CallChi {
+		// After chi: you can't discard the called tile itself, NOR the
+		// tile that would complete the "other end" of the run.
+		// E.g. chi 4-5 on 6 → can't discard 3 (other end) or 6 (called).
+		ban := map[tile.Tile]bool{calledTile: true}
+		// Find the run formed by (support + calledTile), determine endpoints.
+		all := append([]tile.Tile{}, support...)
+		all = append(all, calledTile)
+		minT, maxT := all[0], all[0]
+		for _, t := range all[1:] {
+			if t < minT {
+				minT = t
+			}
+			if t > maxT {
+				maxT = t
+			}
+		}
+		// "Other end": if calledTile == min, other end is max+1.
+		// If calledTile == max, other end is min-1.
+		// If calledTile is middle (kanchan chi), both ends are banned.
+		if calledTile == minT && maxT.Number() < 9 {
+			ban[maxT+1] = true
+		}
+		if calledTile == maxT && minT.Number() > 1 {
+			ban[minT-1] = true
+		}
+		h.kuikaeBan[seat] = ban
+	} else if kind == rules.CallPon {
+		// After pon: you can't discard the same tile.
+		h.kuikaeBan[seat] = map[tile.Tile]bool{calledTile: true}
+	}
+}
+
+// SetKuikaeBan sets tiles that the seat cannot discard this turn
+// (after chi/pon). Called by the game loop after applying the call.
+func (h *Hooks) SetKuikaeBan(seat int, banned map[tile.Tile]bool) {
+	h.kuikaeBan[seat] = banned
 }
 
 // SetKanGrab marks a tile as grabbable (for added-kan 抢杠胡 check).
@@ -186,6 +236,17 @@ func (h *Hooks) SetKanGrab(t tile.Tile) { h.kanGrabTile = &t }
 
 // ClearKanGrab clears the grab window.
 func (h *Hooks) ClearKanGrab() { h.kanGrabTile = nil }
+
+// OnRonPassed sets temporary furiten for the seat.
+func (h *Hooks) OnRonPassed(_ rules.StateAccessor, seat int) {
+	h.tempFuriten[seat] = true
+}
+
+// OnPlayerDraw clears temporary furiten and kuikae ban for the drawing player.
+func (h *Hooks) OnPlayerDraw(_ rules.StateAccessor, seat int) {
+	h.tempFuriten[seat] = false
+	h.kuikaeBan[seat] = nil
+}
 
 // OnRoundEnd is a cleanup hook.
 func (h *Hooks) OnRoundEnd(_ rules.StateAccessor) {}
