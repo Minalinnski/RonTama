@@ -217,12 +217,14 @@ func (m *LobbyModel) handleManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
-	// Treat any 1-char printable key as a typed character.
-	s := msg.String()
-	if len(s) == 1 {
-		c := s[0]
-		if c >= 0x20 && c < 0x7f {
-			m.manualAddr += string(c)
+	// Use msg.Runes for typed characters — more reliable than String()
+	// which can return multi-char representations for modifier keys
+	// (e.g. shift+; → ":" but String() may return "shift+;").
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+		for _, r := range msg.Runes {
+			if r >= 0x20 && r < 0x7f && len(m.manualAddr) < 40 {
+				m.manualAddr += string(r)
+			}
 		}
 	}
 	return m, nil

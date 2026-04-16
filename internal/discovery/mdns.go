@@ -10,12 +10,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"time"
 
 	"github.com/hashicorp/mdns"
 )
+
+func init() {
+	// hashicorp/mdns uses Go's default log package for info messages
+	// like "Closing client {…}" which leak into Bubble Tea's alt-screen.
+	// Suppress them by discarding the default logger's output.
+	log.SetOutput(io.Discard)
+}
 
 // ServiceType is the mDNS service type RonTama uses.
 const ServiceType = "_rontama._tcp"
