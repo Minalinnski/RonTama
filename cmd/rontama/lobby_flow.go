@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -34,22 +36,30 @@ func matchConfigFor(rule rules.RuleSet) (maxRounds int, renchan bool) {
 }
 
 // runLobbyFlow opens the lobby TUI, then dispatches to the chosen mode.
+// If joining fails (connection refused, timeout, etc.), it loops back
+// to the lobby so the user can retry or pick a different option.
 func runLobbyFlow() error {
-	res, err := tui.RunLobby()
-	if err != nil {
-		return err
+	for {
+		res, err := tui.RunLobby()
+		if err != nil {
+			return err
+		}
+		switch res.Mode {
+		case tui.LobbyModeQuit:
+			return nil
+		case tui.LobbyModeLocal:
+			return runLobbyLocal(res)
+		case tui.LobbyModeHost:
+			return runLobbyHost(res)
+		case tui.LobbyModeJoin:
+			if err := runLobbyJoin(res); err != nil {
+				fmt.Fprintf(os.Stderr, "\n  连接失败: %v\n  按 Enter 回大厅重试...\n", err)
+				fmt.Scanln() // wait for user to read the error
+				continue     // back to lobby
+			}
+			return nil
+		}
 	}
-	switch res.Mode {
-	case tui.LobbyModeQuit:
-		return nil
-	case tui.LobbyModeLocal:
-		return runLobbyLocal(res)
-	case tui.LobbyModeHost:
-		return runLobbyHost(res)
-	case tui.LobbyModeJoin:
-		return runLobbyJoin(res)
-	}
-	return nil
 }
 
 // runLobbyLocal: single-process play, you at seat 0 + bots from lobby config.
@@ -105,8 +115,13 @@ func runLobbyHost(res tui.LobbyResult) error {
 	defer cancel()
 
 	if !res.HostBot {
-		// Pure server (you don't play). Fill non-remote seats with bots
-		// per lobby choice; remote seats wait for clients.
+		// Pure server. Pre-bind so firewall dialog is visible.
+		ln, err := net.Listen("tcp", ":7777")
+		if err != nil {
+			return fmt.Errorf("listen :7777: %w", err)
+		}
+		defer ln.Close()
+		fmt.Fprintf(os.Stderr, "✓ Server listening on :7777\n")
 		players := buildServerSeatsNamed(res, nil, res.PlayerName)
 		cfg := server.Config{
 			Addr:        ":7777",
@@ -114,18 +129,35 @@ func runLobbyHost(res tui.LobbyResult) error {
 			Log:         log,
 			Rule:        rule,
 			Players:     players,
+			Listener:    ln,
 		}
 		return server.Run(ctx, cfg)
 	}
 
-	// You ARE playing seat 0 — launch TUI + run server in goroutine.
+	// CRITICAL: bind the TCP listener BEFORE entering Bubble Tea's
+	// alt-screen. This ensures:
+	// 1. macOS firewall "Allow incoming connections?" dialog appears on
+	//    the NORMAL terminal (not hidden behind alt-screen)
+	// 2. Port :7777 is definitely listening before any client tries
+	// 3. No race condition between server goroutine and TUI startup
+	ln, err := net.Listen("tcp", ":7777")
+	if err != nil {
+		return fmt.Errorf("listen :7777: %w\n(Tip: if macOS asks about firewall, click Allow and retry)", err)
+	}
+	defer ln.Close()
+	fmt.Fprintf(os.Stderr, "✓ Server listening on :7777\n")
+	fmt.Fprintf(os.Stderr, "  If macOS asks about incoming connections, click Allow.\n")
+	fmt.Fprintf(os.Stderr, "  Starting TUI...\n")
+
+	// Small delay so the user can see the message + click Allow if needed.
+	time.Sleep(500 * time.Millisecond)
+
+	// Now launch TUI.
 	model := tui.NewPlayModel(rule)
-	model.Banner = formatHostBanner(res, 7777) // static fallback
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	players := buildServerSeatsNamed(res, prog, res.PlayerName)
 	obs := tui.NewTUIObserver(prog)
 
-	// JoinChan pumps live lobby updates into the TUI.
 	joinCh := make(chan server.JoinEvent, 16)
 	go func() {
 		for ev := range joinCh {
@@ -139,7 +171,6 @@ func runLobbyHost(res tui.LobbyResult) error {
 		}
 	}()
 
-	// StartChan: host presses 's' → TUI sends to this → server begins.
 	startCh := make(chan struct{}, 1)
 	model.StartChan = startCh
 
@@ -153,6 +184,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 			ExtraObserver: obs,
 			JoinChan:      joinCh,
 			StartChan:     startCh,
+			Listener:      ln, // pre-bound listener — no race!
 		}
 		if err := server.Run(ctx, cfg); err != nil {
 			prog.Send(tui.RoundDoneMsg{Err: err})

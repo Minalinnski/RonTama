@@ -236,8 +236,8 @@ var mainOptions = []struct {
 }{
 	{"New Local Game (you + 3 bots)", stateNewLocal},
 	{"Host LAN Game (open a room for friends)", stateNewHost},
-	{"Join LAN Game (auto-discover via mDNS)", stateJoin},
-	{"Join by IP address (manual)", stateJoinManual},
+	{"Join by IP address", stateJoinManual},
+	{"Join LAN (auto-discover mDNS)", stateJoin},
 	{"Edit your name", stateEditName},
 }
 

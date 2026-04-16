@@ -69,6 +69,15 @@ type Config struct {
 	// The host TUI sends to this channel when the host presses 's'.
 	// If nil, the server uses JoinTimeout (headless/CLI mode).
 	StartChan <-chan struct{}
+
+	// Listener, when non-nil, is a pre-bound TCP listener that the
+	// server uses instead of calling net.Listen itself. This lets the
+	// caller bind the port BEFORE entering the TUI's alt-screen, so
+	// macOS's firewall "Allow incoming connections?" dialog shows on
+	// the normal terminal (not hidden behind alt-screen). Also
+	// eliminates the race condition where clients see the IP in the
+	// TUI before the server has actually bound the port.
+	Listener net.Listener
 }
 
 // JoinEvent describes a join-phase state change pushed to JoinChan.
@@ -109,13 +118,19 @@ func Run(ctx context.Context, cfg Config) error {
 
 	var ln net.Listener
 	if len(remoteSeats) > 0 {
-		lc := &net.ListenConfig{}
-		var err error
-		ln, err = lc.Listen(ctx, "tcp", cfg.Addr)
-		if err != nil {
-			return fmt.Errorf("listen %s: %w", cfg.Addr, err)
+		if cfg.Listener != nil {
+			// Use the pre-bound listener (caller already did net.Listen
+			// before entering the TUI, so macOS firewall dialog was visible).
+			ln = cfg.Listener
+		} else {
+			lc := &net.ListenConfig{}
+			var err error
+			ln, err = lc.Listen(ctx, "tcp", cfg.Addr)
+			if err != nil {
+				return fmt.Errorf("listen %s: %w", cfg.Addr, err)
+			}
+			defer ln.Close()
 		}
-		defer ln.Close()
 		cfg.Log.Info("server listening", "addr", ln.Addr(), "remote_seats", remoteSeats)
 	} else {
 		cfg.Log.Info("no remote seats — running pure local game")
