@@ -55,7 +55,7 @@ type RuleSet interface {
 	//
 	// The riichi pot (if any) is settled by the caller, not here —
 	// rules don't need to know about it.
-	Settle(dealer, winner int, ctx WinContext, score Score, hasWon [4]bool) [4]int
+	Settle(dealer, winner int, ctx WinContext, score Score, hasWon [4]bool, honba int) [4]int
 
 	// Hooks returns the rule-specific lifecycle hooks, or nil if the
 	// variant doesn't need them (Sichuan). When non-nil, the game
@@ -142,11 +142,15 @@ type RuleHooks interface {
 	// caused most of the Riichi bugs.
 	BuildWinContext(st StateAccessor, seat int, winTile tile.Tile, tsumo bool, from int) WinContext
 
-	// ValidateAction checks a player's DrawAction before the loop
-	// processes it. Return non-nil to reject (the loop will
-	// downgrade to a tsumogiri discard).
-	// Riichi: enforce post-riichi tsumogiri, validate riichi declaration.
-	ValidateAction(st StateAccessor, seat int, action DrawAction) error
+	// CheckAction is a PURE validation: returns nil if the action is
+	// legal, error otherwise. No state mutation.
+	// Used by PlayerView pre-computation (CanRiichi per-tile scan).
+	CheckAction(st StateAccessor, seat int, action DrawAction) error
+
+	// ApplyAction applies pre-action side-effects for a validated
+	// action (e.g. riichi: debit 1000, set flag, open ippatsu).
+	// Called by the game loop AFTER CheckAction returns nil.
+	ApplyAction(st StateAccessor, seat int, action DrawAction)
 
 	// AvailableCalls returns the call opportunities for a discard.
 	// Returning nil tells the loop to use its own default logic

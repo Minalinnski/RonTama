@@ -237,14 +237,14 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 
 		action := players[seat].OnDraw(st.View(seat))
 
-		// Hooks validation: check the action BEFORE processing. Hooks
-		// may reject (e.g. post-riichi player trying to discard a
-		// non-drawn tile) or apply side effects (riichi declaration:
-		// debit 1000, set flag, open ippatsu window).
+		// Hooks validation: pure check (no side effects), then apply if ok.
 		if hooks != nil {
-			if err := hooks.ValidateAction(st, seat, toRulesDrawAction(action)); err != nil {
+			rAction := toRulesDrawAction(action)
+			if err := hooks.CheckAction(st, seat, rAction); err != nil {
 				log.Warn("hooks rejected action — falling back to discard", "seat", seat, "err", err)
 				action = DrawAction{Kind: DrawDiscard, Discard: drawn}
+			} else {
+				hooks.ApplyAction(st, seat, rAction)
 			}
 		}
 
@@ -350,11 +350,59 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 				break
 			}
 
-		case DrawConcealedKan, DrawAddedKan:
-			// Stub: skip kan declarations in the Phase 2 driver. Player
-			// implementations should not return these yet. If they do
-			// we treat as a discard of the kan tile.
-			return nil, fmt.Errorf("seat %d tried to declare kan; not implemented in Phase 2", seat)
+		case DrawConcealedKan:
+			// Concealed kan (暗杠): player has 4 of a kind in hand.
+			kt := action.KanTile
+			if st.Players[seat].Hand.Concealed[kt] < 4 {
+				return nil, fmt.Errorf("seat %d tried concealed kan on %s but has < 4", seat, kt)
+			}
+			for i := 0; i < 4; i++ {
+				st.Players[seat].Hand.Remove(kt)
+			}
+			st.Players[seat].Hand.Melds = append(st.Players[seat].Hand.Melds, tile.Meld{
+				Kind: tile.ConcealedKan, Tiles: []tile.Tile{kt, kt, kt, kt}, From: -1,
+			})
+			obs.OnCall(st, CallKan, seat, seat, kt)
+			log.Debug("concealed-kan", "seat", seat, "tile", kt)
+			if hooks != nil {
+				hooks.AfterCall(st, toRulesCallKind(CallKan), seat, seat)
+			}
+			// Kan-replacement draw: player draws from the back of the wall.
+			st.AfterKan = true
+			// Loop back to same seat's draw phase (the next iteration will
+			// draw from the back because AfterKan=true).
+			st.Current = seat
+			continue
+
+		case DrawAddedKan:
+			// Added kan (加杠): promote an existing pon to a kan.
+			kt := action.KanTile
+			if st.Players[seat].Hand.Concealed[kt] < 1 {
+				return nil, fmt.Errorf("seat %d tried added kan on %s but has 0", seat, kt)
+			}
+			promoted := false
+			for mi, m := range st.Players[seat].Hand.Melds {
+				if m.Kind == tile.Pon && len(m.Tiles) >= 3 && m.Tiles[0] == kt {
+					st.Players[seat].Hand.Remove(kt)
+					st.Players[seat].Hand.Melds[mi].Kind = tile.AddedKan
+					st.Players[seat].Hand.Melds[mi].Tiles = append(st.Players[seat].Hand.Melds[mi].Tiles, kt)
+					promoted = true
+					break
+				}
+			}
+			if !promoted {
+				return nil, fmt.Errorf("seat %d tried added kan on %s but no matching pon", seat, kt)
+			}
+			obs.OnCall(st, CallKan, seat, seat, kt)
+			log.Debug("added-kan", "seat", seat, "tile", kt)
+			if hooks != nil {
+				hooks.AfterCall(st, toRulesCallKind(CallKan), seat, seat)
+			}
+			// TODO: other players get a kan-grab (抢杠胡) window here.
+			// For now skip straight to replacement draw.
+			st.AfterKan = true
+			st.Current = seat
+			continue
 		}
 	}
 
@@ -600,15 +648,14 @@ func applyCall(st *State, c Call, discard tile.Tile, from int) {
 	})
 }
 
-// applySettlement asks the rule for per-seat deltas and applies them,
-// then pays the riichi pot to the winner (whoever takes the round
-// first claims the entire accumulated pot).
+// applySettlement is the legacy (non-hooks) settlement path.
+// Used only when hooks == nil (Sichuan).
 func applySettlement(st *State, winner int, ctx rules.WinContext, score rules.Score) {
 	hasWon := [NumPlayers]bool{}
 	for i := 0; i < NumPlayers; i++ {
 		hasWon[i] = st.Players[i].HasWon
 	}
-	deltas := st.Rule.Settle(st.Dealer, winner, ctx, score, hasWon)
+	deltas := st.Rule.Settle(st.Dealer, winner, ctx, score, hasWon, 0)
 	for i := 0; i < NumPlayers; i++ {
 		st.Players[i].Score += deltas[i]
 	}

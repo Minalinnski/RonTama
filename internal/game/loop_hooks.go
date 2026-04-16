@@ -44,7 +44,9 @@ func applySettlementWithHooks(hooks rules.RuleHooks, st *State, winner int, ctx 
 	for i := 0; i < NumPlayers; i++ {
 		hasWon[i] = st.Players[i].HasWon
 	}
-	deltas := st.Rule.Settle(st.Dealer, winner, ctx, score, hasWon)
+	// TODO: get honba from hooks or state. For now pass 0 (callers using
+	// applySettlementWithHooks should pass honba if they have it).
+	deltas := st.Rule.Settle(st.Dealer, winner, ctx, score, hasWon, 0)
 	for i := 0; i < NumPlayers; i++ {
 		st.Players[i].Score += deltas[i]
 	}

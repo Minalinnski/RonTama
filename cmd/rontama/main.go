@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Minalinnski/RonTama/internal/tui"
 )
 
 // Build-time variables populated by GoReleaser via -ldflags.
@@ -30,8 +29,6 @@ func main() {
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
-	case "tui":
-		runTUI()
 	case "lobby":
 		if err := runLobbyFlow(); err != nil {
 			fmt.Fprintln(os.Stderr, "lobby:", err)
@@ -65,13 +62,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown subcommand %q\n\n", cmd)
 		printUsage()
 		os.Exit(2)
-	}
-}
-
-func runTUI() {
-	if _, err := tui.NewHello().Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "rontama:", err)
-		os.Exit(1)
 	}
 }
 

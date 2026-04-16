@@ -41,6 +41,11 @@ type Hooks struct {
 
 	// Round wind (場風). East for the first 4 hands, South for next 4, etc.
 	roundWind tile.Tile
+
+	// Kan-grab (抢杠胡): when a player declares added-kan, the tile is
+	// temporarily "grabbable" — other players get a one-shot ron window.
+	// Set in AfterCall, cleared after the ron-check pass.
+	kanGrabTile *tile.Tile
 }
 
 // NewHooks creates a new Hooks instance. Called once per round.
@@ -93,7 +98,7 @@ func (h *Hooks) BuildWinContext(st rules.StateAccessor, seat int, winTile tile.T
 		Dingque:           st.GetPlayerDingque(seat),
 		LastTile:          st.GetLastTile(),
 		AfterKan:          st.GetAfterKan(),
-		KanGrab:           false, // TODO: proper kan-grab tracking
+		KanGrab:           h.kanGrabTile != nil && *h.kanGrabTile == winTile,
 		RoundWind:         h.roundWind,
 		Riichi:            h.riichi[seat],
 		DoubleRiichi:      h.riichi[seat] && st.GetTurnsTaken() <= 4,
@@ -103,20 +108,25 @@ func (h *Hooks) BuildWinContext(st rules.StateAccessor, seat int, winTile tile.T
 	}
 }
 
-// ValidateAction checks a player's action before the loop processes it.
-func (h *Hooks) ValidateAction(st rules.StateAccessor, seat int, action rules.DrawAction) error {
-	// Post-riichi: must tsumogiri (discard exactly the drawn tile).
-	if h.riichi[seat] && action.Kind == 0 { // 0 = Discard
+// CheckAction is a PURE check (no side effects). Returns nil if legal.
+func (h *Hooks) CheckAction(st rules.StateAccessor, seat int, action rules.DrawAction) error {
+	if h.riichi[seat] && action.Kind == 0 {
 		jd := st.GetPlayerJustDrew(seat)
 		if jd != nil && action.Discard != *jd {
 			return fmt.Errorf("riichi: must discard drawn tile (%s), not %s", *jd, action.Discard)
 		}
 	}
-	// Riichi declaration validation.
 	if action.DeclareRiichi {
 		return h.validateRiichi(st, seat, action.Discard)
 	}
 	return nil
+}
+
+// ApplyAction applies side-effects for a validated action (riichi).
+func (h *Hooks) ApplyAction(st rules.StateAccessor, seat int, action rules.DrawAction) {
+	if action.DeclareRiichi {
+		h.applyRiichi(st, seat)
+	}
 }
 
 // AvailableCalls returns calls with furiten filtering + riichi restrictions.
@@ -159,11 +169,23 @@ func (h *Hooks) AfterDiscard(st rules.StateAccessor, seat int, t tile.Tile) {
 
 // AfterCall invalidates ippatsu for all riichi'd players (a call breaks
 // the uninterrupted rotation that ippatsu requires).
-func (h *Hooks) AfterCall(_ rules.StateAccessor, _ rules.CallKind, _, _ int) {
+// For added-kan calls, sets the kan-grab tile so BuildWinContext can
+// detect 抢杠胡.
+func (h *Hooks) AfterCall(_ rules.StateAccessor, kind rules.CallKind, seat, _ int) {
 	for i := range h.ippatsuAt {
 		h.ippatsuAt[i] = -1
 	}
+	// Clear any previous kan-grab.
+	h.kanGrabTile = nil
 }
+
+// SetKanGrab marks a tile as grabbable (for added-kan 抢杠胡 check).
+// Called by the game loop right after an added-kan is declared, before
+// the ron-check pass.
+func (h *Hooks) SetKanGrab(t tile.Tile) { h.kanGrabTile = &t }
+
+// ClearKanGrab clears the grab window.
+func (h *Hooks) ClearKanGrab() { h.kanGrabTile = nil }
 
 // OnRoundEnd is a cleanup hook.
 func (h *Hooks) OnRoundEnd(_ rules.StateAccessor) {}

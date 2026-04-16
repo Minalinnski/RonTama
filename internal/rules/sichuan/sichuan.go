@@ -118,7 +118,7 @@ func hasSuit(c [tile.NumKinds]int, s tile.Suit) bool {
 //
 // Sichuan: tsumo → each live (not-already-won) non-winner pays BasePts;
 // ron → discarder pays 2× BasePts.
-func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, hasWon [4]bool) [4]int {
+func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, hasWon [4]bool, _ int) [4]int {
 	var d [4]int
 	if ctx.Tsumo {
 		for i := 0; i < 4; i++ {

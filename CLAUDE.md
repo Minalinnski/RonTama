@@ -77,16 +77,26 @@ internal/
 
 见 git log + README roadmap。
 
-## 已知 TODO（不影响主流程）
+## 已知 TODO
 
-**Bot tuning (Phase 7-style work, 远期)**
-- Easy/Medium/Hard 三档目前差异在 1000 局样本里看不太出来。要做到"硬碾压"需要真 EV / MCTS / Mortal 接入，不在本仓的 MVP 范围内。
+**已完成（RuleHooks 重构后）**：
+- ✅ Dead wall 14 张 + dora 指示牌翻面 (hooks.OnRoundSetup)
+- ✅ 振听（自家河振听）(hooks.AvailableCalls 过滤)
+- ✅ 一发轮数限制 (ippatsuAt turn counter, 4 轮)
+- ✅ Honba 本场棒奖金 (+100/+300 per honba in Settle)
+- ✅ 暗杠 + 加杠 (game loop DrawConcealedKan/DrawAddedKan)
+- ✅ 抢杠胡 (hooks.SetKanGrab/ClearKanGrab + BuildWinContext.KanGrab)
+- ✅ 三暗刻 / 小三元 / 三色同刻 yaku
+- ✅ CheckAction/ApplyAction 分离 (纯校验 + 副作用分离)
+- ✅ PlayerView.CanTsumo / CanRiichi pre-computed
+- ✅ Round wind 轮转 (match → RoundOpts → hooks)
+- ✅ Yakuhai 圆风逻辑修正
 
-**Riichi 仍缺的小事**
-- Wall 还没切 dead wall（14 张），dora indicators 现在由调用方传入而不是 wall 自己管理。
-- 一发的判定是简化版（own next discard + 任何 call 都关窗），没分严格的"一巡内"窗口。
-- 庄家连庄 / 流局点数转移 / 本场棒 (honba) / 立直棒跨局结转：未实现，单回合就结算了。
-- 鸣牌后的"喰い替え"约束（pon/kan 后不能切回同种牌的对子）：未限制。
+**仍缺（低优先级）**：
+- 喰い替え约束（pon/kan 后不能切回同种牌）：未限制
+- Temporary furiten（临时振听 — 别人打的你没要，同巡不能荣）：只做了自家河振听
+- 更多稀有役种（緑一色、字一色、大四喜、小四喜、四槓子、天和、地和）
+- Bot 强度调优 (Phase 7: Mortal / MCTS)
 
 **TUI multi-seat over network**
-- `client.TUIDecider` 假设服务端总是把 seat 0 分给当前客户端。多客户端同时玩时只有第一个连进来的人能用 TUI；其他人渲染会错位。要支持任意 seat，得把 `tui.HumanSeat` 从常量改成 PlayModel 字段。
+- `tui.HumanSeat` 硬编码 0。多客户端只有第一个连的人渲染正确。

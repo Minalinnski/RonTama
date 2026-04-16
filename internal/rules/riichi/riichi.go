@@ -96,10 +96,12 @@ func (r Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bo
 //	non-dealer tsumo → dealer pays base × 2; the two other non-dealers each pay base × 1
 //
 // Each payment is rounded up to the next 100.
-func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, _ [4]bool) [4]int {
+func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, _ [4]bool, honba int) [4]int {
 	var d [4]int
 	base := score.BasePts
 	dealerWin := winner == dealer
+	// Honba bonus: +100 per honba from each loser (tsumo) or +300 from
+	// discarder (ron). Standard Riichi honba rule.
 	if ctx.Tsumo {
 		for i := 0; i < 4; i++ {
 			if i == winner {
@@ -109,7 +111,7 @@ func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, 
 			if dealerWin || i == dealer {
 				mult = 2
 			}
-			pay := roundUp100(base * mult)
+			pay := roundUp100(base*mult) + 100*honba
 			d[i] -= pay
 			d[winner] += pay
 		}
@@ -118,7 +120,7 @@ func (Rule) Settle(dealer, winner int, ctx rules.WinContext, score rules.Score, 
 		if dealerWin {
 			mult = 6
 		}
-		pay := roundUp100(base * mult)
+		pay := roundUp100(base*mult) + 300*honba
 		d[ctx.From] -= pay
 		d[winner] += pay
 	}

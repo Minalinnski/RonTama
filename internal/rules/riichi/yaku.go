@@ -99,6 +99,21 @@ func (Rule) evaluate(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext, st
 		addYaku("平和", 1)
 		pinfu = true
 	}
+	// 三暗刻 (sanankou): 3 concealed triplets (including concealed kans).
+	if standard {
+		ankou := countConcealedTriplets(combined, melds, winTile, ctx)
+		if ankou >= 3 {
+			addYaku("三暗刻", 2)
+		}
+	}
+	// 小三元 (shousangen): 2 dragon triplets + 1 dragon pair.
+	if standard && isShousangen(combined, melds) {
+		addYaku("小三元", 2)
+	}
+	// 三色同刻 (sanshoku doukou): same-number triplet in all 3 suits.
+	if standard && hasSanshokuDoukou(combined, melds) {
+		addYaku("三色同刻", 2)
+	}
 
 	// Honitsu / Chinitsu (count subset).
 	switch suitPurity(combined, melds) {
@@ -331,6 +346,77 @@ func hasSanshokuDoujun(c [tile.NumKinds]int, melds []tile.Meld) bool {
 			suitVecs[1][start] > 0 && suitVecs[1][start+1] > 0 && suitVecs[1][start+2] > 0 &&
 			suitVecs[2][start] > 0 && suitVecs[2][start+1] > 0 && suitVecs[2][start+2] > 0
 		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// countConcealedTriplets counts concealed triplets (count >= 3 in the
+// combined array, excluding the one possibly completed by ron). Concealed
+// kans also count.
+func countConcealedTriplets(c [tile.NumKinds]int, melds []tile.Meld, winTile tile.Tile, ctx rules.WinContext) int {
+	count := 0
+	for i := 0; i < tile.NumKinds; i++ {
+		if c[i] >= 3 {
+			// If this triplet was completed by ron (not tsumo), it's
+			// actually an open triplet for scoring purposes.
+			if !ctx.Tsumo && tile.Tile(i) == winTile && c[i] == 3 {
+				continue // ron-completed → open (minkou)
+			}
+			count++
+		}
+	}
+	for _, m := range melds {
+		if m.Kind == tile.ConcealedKan {
+			count++
+		}
+	}
+	return count
+}
+
+// isShousangen: 2 dragon triplets/kans + 1 dragon pair.
+func isShousangen(c [tile.NumKinds]int, melds []tile.Meld) bool {
+	dragons := []tile.Tile{tile.White, tile.Green, tile.Red}
+	trips, pairs := 0, 0
+	for _, d := range dragons {
+		has3 := c[d] >= 3
+		for _, m := range melds {
+			if (m.Kind == tile.Pon || m.IsKan()) && len(m.Tiles) >= 3 && m.Tiles[0] == d {
+				has3 = true
+			}
+		}
+		if has3 {
+			trips++
+		} else if c[d] == 2 {
+			pairs++
+		}
+	}
+	return trips == 2 && pairs == 1
+}
+
+// hasSanshokuDoukou: same-number triplet in all 3 suits (e.g. 222m + 222p + 222s).
+func hasSanshokuDoukou(c [tile.NumKinds]int, melds []tile.Meld) bool {
+	// Build trip-presence per (suit, number).
+	has := [3][9]bool{}
+	for suit := 0; suit < 3; suit++ {
+		for n := 0; n < 9; n++ {
+			if c[suit*9+n] >= 3 {
+				has[suit][n] = true
+			}
+		}
+	}
+	for _, m := range melds {
+		if m.Kind == tile.Chi || len(m.Tiles) < 3 {
+			continue
+		}
+		t := m.Tiles[0]
+		if t.IsSuit() {
+			has[int(t)/9][int(t)%9] = true
+		}
+	}
+	for n := 0; n < 9; n++ {
+		if has[0][n] && has[1][n] && has[2][n] {
 			return true
 		}
 	}
