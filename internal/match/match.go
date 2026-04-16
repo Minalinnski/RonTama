@@ -19,6 +19,7 @@ import (
 
 	"github.com/Minalinnski/RonTama/internal/game"
 	"github.com/Minalinnski/RonTama/internal/rules"
+	"github.com/Minalinnski/RonTama/internal/tile"
 )
 
 // Config describes a match's length and behaviour.
@@ -91,6 +92,9 @@ func RunMatch(cfg Config, log *slog.Logger, obs game.Observer) (*Result, error) 
 // per-round payout — accumulated but cosmetic for now.
 func runOne(cfg Config, st *State, log *slog.Logger, obs game.Observer) (*game.RoundResult, error) {
 	scores := st.Scores
+	// Compute round wind from round index: 0-3 = East, 4-7 = South, etc.
+	winds := []tile.Tile{tile.East, tile.South, tile.West, tile.North}
+	roundWind := winds[(st.RoundIdx/game.NumPlayers)%4]
 	opts := game.RoundOpts{
 		Rule:           cfg.Rule,
 		Players:        cfg.Players,
@@ -100,6 +104,7 @@ func runOne(cfg Config, st *State, log *slog.Logger, obs game.Observer) (*game.R
 		InitialScores:  &scores,
 		CarryRiichiPot: st.RiichiPot,
 		Honba:          st.Honba,
+		RoundWind:      roundWind,
 	}
 	return game.RunRoundOpts(opts)
 }

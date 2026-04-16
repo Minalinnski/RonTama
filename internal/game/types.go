@@ -96,5 +96,11 @@ type PlayerView struct {
 	Names      [NumPlayers]string // display names per seat
 	Round      int
 	TurnsTaken int
+
+	// Pre-computed flags from hooks — TUI reads these instead of
+	// re-implementing rule validation.
+	CanTsumo    bool   // true if this draw completes a valid win
+	CanRiichi   []bool // per-tile (sorted hand + drawn): true if discarding it allows riichi declaration
+	IsRiichi    bool   // this seat has declared riichi
 }
 

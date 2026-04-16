@@ -279,7 +279,7 @@ func (m PlayModel) handleDingqueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Post-riichi auto mode: only tsumo is interactive.
 	if m.prompt.View.Riichi[m.prompt.View.Seat] {
-		if msg.String() == "t" && canTsumoNow(m.prompt.View) {
+		if msg.String() == "t" && m.prompt.View.CanTsumo {
 			m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 			m.prompt = nil
 		}
@@ -324,7 +324,7 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected++
 		}
 	case "t":
-		if !canTsumoNow(m.prompt.View) {
+		if !m.prompt.View.CanTsumo {
 			return m, nil
 		}
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
@@ -505,30 +505,12 @@ func tileShanten(h tile.Hand) int {
 	return computeShantenMin(h.Concealed, len(h.Melds))
 }
 
-// canTsumoNow returns true when the current draw makes a winning hand
-// under the rule. Used by the TUI to gate the 't' key and the prompt
-// hint — we don't want to OFFER tsumo if the game would reject it
-// (Riichi specifically requires a yaku, so 4-sets+1-pair without any
-// yaku-bearing condition is invalid).
+// canTsumoNow is DEPRECATED — PlayerView.CanTsumo is now pre-computed
+// by the game layer via hooks.BuildWinContext + Rule.CanWin. This
+// function is kept only for an edge case where View isn't populated
+// (should not happen in normal play).
 func canTsumoNow(view game.PlayerView) bool {
-	if view.JustDrew == nil {
-		return false
-	}
-	hand := view.OwnHand
-	concealed := hand.Concealed
-	concealed[*view.JustDrew]--
-	probe := tile.Hand{Concealed: concealed, Melds: hand.Melds}
-	ctx := rules.WinContext{
-		WinningTile: *view.JustDrew,
-		Tsumo:       true,
-		From:        -1,
-		Seat:        view.Seat,
-		Dealer:      view.Dealer,
-		Dingque:     view.Dingque[view.Seat],
-		Riichi:      view.Riichi[view.Seat],
-		RoundWind:   tile.East, // Phase 6 simplification — round wind is always East
-	}
-	return view.Rule.CanWin(probe, *view.JustDrew, ctx)
+	return view.CanTsumo
 }
 
 // countdownTick schedules a one-shot tea.Cmd that fires after 250ms.
@@ -980,7 +962,7 @@ func (m PlayModel) renderPrompt() string {
 	case "draw":
 		// Post-riichi: only tsumo is interactive.
 		if m.prompt.View.Riichi[m.prompt.View.Seat] {
-			if canTsumoNow(m.prompt.View) {
+			if m.prompt.View.CanTsumo {
 				return promptStyle.Render("立直中 — t=自摸  (auto-tsumogiri if you pass)" + countdown)
 			}
 			return promptStyle.Render("立直中 — 自動摸切…" + countdown)
@@ -994,7 +976,7 @@ func (m PlayModel) renderPrompt() string {
 			drewLabel = "drew " + m.prompt.View.JustDrew.String()
 		}
 		tsumoHint := ""
-		if canTsumoNow(m.prompt.View) {
+		if m.prompt.View.CanTsumo {
 			tsumoHint = "  t=自摸"
 		}
 		// Show r=立直 when ANY tile qualifies (entering riichi select

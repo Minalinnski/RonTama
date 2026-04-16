@@ -100,6 +100,10 @@ type RoundOpts struct {
 	// Honba (本場) counter — displayed to observers; bonus effect on
 	// payouts is a Phase-TODO for proper Riichi scoring.
 	Honba int
+	// RoundWind for Riichi (東/南/西/北 based on round index). Hooks
+	// read this to set the round wind in WinContext + yakuhai detection.
+	// Zero = default to East.
+	RoundWind tile.Tile
 }
 
 // RunRoundOpts is the flexible entrypoint used by both single-round
@@ -134,11 +138,14 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 		}
 	}
 	// ---- RuleHooks integration ----
-	// hooks is nil for Sichuan (no rule-specific lifecycle). For Riichi,
-	// hooks manage dead wall, dora, furiten, ippatsu, riichi state —
-	// keeping the loop below variant-agnostic.
 	hooks := rule.Hooks()
 	if hooks != nil {
+		// Store the round wind in RuleState so hooks can read it during
+		// OnRoundSetup. The hooks will overwrite RuleState with their own
+		// state struct (but will read round wind first).
+		if opts.RoundWind != 0 {
+			st.RuleState = opts.RoundWind // temporary; hooks.OnRoundSetup reads + replaces
+		}
 		hooks.OnRoundSetup(st)
 	}
 	obs.OnRoundStart(st)

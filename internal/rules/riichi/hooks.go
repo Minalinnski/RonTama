@@ -64,8 +64,13 @@ func NewHooks(rule *Rule, roundWind tile.Tile) *Hooks {
 // ---- rules.RuleHooks implementation ----
 
 // OnRoundSetup carves the 14-tile dead wall, reveals the first dora
-// indicator, and stores self in RuleState.
+// indicator, reads the round wind from RuleState (set by the loop from
+// RoundOpts), and stores self in RuleState.
 func (h *Hooks) OnRoundSetup(st rules.StateAccessor) {
+	// Read round wind that the loop temporarily stashed in RuleState.
+	if rw, ok := st.GetRuleState().(tile.Tile); ok && rw >= tile.East && rw <= tile.North {
+		h.roundWind = rw
+	}
 	// Carve dead wall (14 tiles from the end of the shuffled wall).
 	h.deadWall = st.DrawFromWallBack(14)
 	// Dora indicator: 3rd tile in the dead wall (position [2] of the
