@@ -64,6 +64,10 @@ func (Rule) RequiresDingque() bool { return true }
 // RequiresExchange3 is true (换三张).
 func (Rule) RequiresExchange3() bool { return true }
 
+// Hooks returns nil — Sichuan has no lifecycle hooks; the game loop
+// uses its own default logic for all phases.
+func (Rule) Hooks() rules.RuleHooks { return nil }
+
 // CanWin checks Sichuan agari validity.
 //
 // Requirements:

@@ -56,6 +56,13 @@ type RuleSet interface {
 	// The riichi pot (if any) is settled by the caller, not here —
 	// rules don't need to know about it.
 	Settle(dealer, winner int, ctx WinContext, score Score, hasWon [4]bool) [4]int
+
+	// Hooks returns the rule-specific lifecycle hooks, or nil if the
+	// variant doesn't need them (Sichuan). When non-nil, the game
+	// loop delegates WinContext construction, action validation, call
+	// enumeration, and post-action bookkeeping to these hooks — keeping
+	// the loop itself variant-agnostic.
+	Hooks() RuleHooks
 }
 
 // WinContext is the situational metadata around a potential win that
@@ -98,4 +105,133 @@ type Score struct {
 	Patterns []string // human-readable yaku / 番型 names
 	Fan      int      // total fan / 番 (rule-specific aggregation)
 	BasePts  int      // base points (rule-specific; what the loser(s) pay × seat factor)
+}
+
+// ---------------------------------------------------------------------------
+// RuleHooks — optional per-variant lifecycle callbacks
+// ---------------------------------------------------------------------------
+
+// RuleHooks lets a variant (e.g. Riichi) inject rule-specific logic
+// into the game loop WITHOUT the game loop knowing what variant is
+// running.
+//
+// The game loop calls hooks at well-defined points (setup, draw,
+// discard, call, round-end). The hooks own ALL variant-specific state
+// (riichi flags, ippatsu window, furiten sets, dora indicators, dead
+// wall) via State.RuleState, so game.State stays variant-agnostic.
+//
+// Sichuan returns nil from Hooks() — the game loop skips all hook
+// calls and uses its own default logic.
+//
+// A forward-declared import cycle is avoided because RuleHooks lives
+// in the rules package (which game already imports) and accepts
+// opaque *game.State via an interface or a concrete pointer.
+// However, since rules can't import game (cycle), hooks receive an
+// opaque StateAccessor interface instead of *game.State directly.
+// See StateAccessor below.
+type RuleHooks interface {
+	// OnRoundSetup is called after the wall is dealt, before any
+	// player action. Riichi: carve dead wall, flip dora indicator,
+	// set round wind, init furiten sets.
+	OnRoundSetup(st StateAccessor)
+
+	// BuildWinContext is the SINGLE source of truth for WinContext
+	// construction. Called by the game loop every time it needs a
+	// context (tsumo validation, tsumo scoring, ron checks, ron
+	// scoring). Eliminates the 3+ diverging WinContext builders that
+	// caused most of the Riichi bugs.
+	BuildWinContext(st StateAccessor, seat int, winTile tile.Tile, tsumo bool, from int) WinContext
+
+	// ValidateAction checks a player's DrawAction before the loop
+	// processes it. Return non-nil to reject (the loop will
+	// downgrade to a tsumogiri discard).
+	// Riichi: enforce post-riichi tsumogiri, validate riichi declaration.
+	ValidateAction(st StateAccessor, seat int, action DrawAction) error
+
+	// AvailableCalls returns the call opportunities for a discard.
+	// Returning nil tells the loop to use its own default logic
+	// (pon/kan/chi based on hand contents).
+	// Riichi: filters out furiten rons, blocks chi/pon for riichi'd players.
+	AvailableCalls(st StateAccessor, discard tile.Tile, from int) []Call
+
+	// AfterDiscard is called after a tile is placed in the river.
+	// Riichi: update furiten set, manage ippatsu countdown.
+	AfterDiscard(st StateAccessor, seat int, t tile.Tile)
+
+	// AfterCall is called after a pon/chi/kan is applied.
+	// Riichi: invalidate ippatsu for affected players.
+	AfterCall(st StateAccessor, kind CallKind, seat, from int)
+
+	// OnRoundEnd is called when the round finishes (win or exhaustion).
+	// Cleanup hook.
+	OnRoundEnd(st StateAccessor)
+
+	// GetRiichiPot returns the current riichi pot value (for settlement).
+	// Returns 0 for rules without riichi.
+	GetRiichiPot() int
+
+	// ConsumeRiichiPot zeroes the pot and returns the old value (for
+	// awarding to winner).
+	ConsumeRiichiPot() int
+}
+
+// DrawAction mirrors game.DrawAction to break the import cycle
+// (rules can't import game). The game loop converts between the two.
+type DrawAction struct {
+	Kind          int // 0=Discard, 1=Tsumo, 2=ConcealedKan, 3=AddedKan
+	Discard       tile.Tile
+	KanTile       tile.Tile
+	DeclareRiichi bool
+}
+
+// CallKind mirrors game.CallKind.
+type CallKind int
+
+const (
+	CallPass CallKind = iota
+	CallChi
+	CallPon
+	CallKan
+	CallRon
+)
+
+// Call mirrors game.Call for the hooks interface.
+type Call struct {
+	Kind    CallKind
+	Player  int
+	Tile    tile.Tile
+	Support []tile.Tile
+}
+
+// StateAccessor is a narrow read/write interface into game.State that
+// the hooks package can use without importing internal/game (which
+// would create a cycle). The game loop implements this on *State.
+type StateAccessor interface {
+	// Reads
+	NumPlayers() int
+	Dealer() int
+	Current() int
+	TurnsTaken() int
+	WallRemaining() int
+	PlayerConcealed(seat int) [tile.NumKinds]int
+	PlayerMelds(seat int) []tile.Meld
+	PlayerScore(seat int) int
+	PlayerDingque(seat int) tile.Suit
+	PlayerJustDrew(seat int) *tile.Tile
+	PlayerHasWon(seat int) bool
+	PlayerName(seat int) string
+	Discards(seat int) []tile.Tile
+	AllowsChi() bool
+	AfterKan() bool
+	LastTile() bool
+
+	// Writes (hooks need to mutate some state)
+	SetPlayerScore(seat int, score int)
+	SetAfterKan(v bool)
+	SetRuleState(v any)
+	GetRuleState() any
+
+	// Wall operations (for dead wall carving, kan-replacement draw)
+	DrawFromWallBack(n int) []tile.Tile // draw from END for dead wall
+	DrawFromWall() (tile.Tile, bool)    // normal draw from front
 }

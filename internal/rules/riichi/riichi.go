@@ -60,6 +60,14 @@ func (Rule) RequiresDingque() bool { return false }
 // RequiresExchange3 is false.
 func (Rule) RequiresExchange3() bool { return false }
 
+// Hooks returns the Riichi-specific lifecycle hooks. These manage dead
+// wall, dora indicators, furiten tracking, ippatsu window, riichi
+// declaration validation, and post-riichi tsumogiri enforcement.
+//
+// TODO(phase2): return a real *Hooks implementation. For now returns
+// nil to keep the build green while the refactor is in progress.
+func (Rule) Hooks() rules.RuleHooks { return nil }
+
 // CanWin returns true if hand+winningTile is a standard, chiitoi, or
 // kokushi shape AND has at least one yaku (otherwise no-yaku → no-win).
 func (r Rule) CanWin(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext) bool {
