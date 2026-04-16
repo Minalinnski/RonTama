@@ -16,11 +16,22 @@ import (
 	"github.com/Minalinnski/RonTama/internal/ai/medium"
 	"github.com/Minalinnski/RonTama/internal/discovery"
 	"github.com/Minalinnski/RonTama/internal/game"
+	"github.com/Minalinnski/RonTama/internal/match"
 	"github.com/Minalinnski/RonTama/internal/net/client"
 	"github.com/Minalinnski/RonTama/internal/net/server"
 	"github.com/Minalinnski/RonTama/internal/rules"
 	"github.com/Minalinnski/RonTama/internal/tui"
 )
+
+// matchConfigFor returns sensible default match parameters per rule.
+// Sichuan blood-battle is traditionally single-round; Riichi is
+// 東風戦 (4 rounds with dealer continuation on dealer wins).
+func matchConfigFor(rule rules.RuleSet) (maxRounds int, renchan bool) {
+	if rule.RequiresDingque() {
+		return 1, false // sichuan
+	}
+	return 4, true // riichi 東風戦
+}
 
 // runLobbyFlow opens the lobby TUI, then dispatches to the chosen mode.
 func runLobbyFlow() error {
@@ -54,7 +65,14 @@ func runLobbyLocal(res tui.LobbyResult) error {
 		players := buildLocalPlayersNamed(res, prog, res.PlayerName)
 		obs := tui.NewTUIObserver(prog)
 		log := slog.New(slog.NewTextHandler(io.Discard, nil))
-		_, err := game.RunRoundWithObserver(rule, players, 0, log, obs)
+		maxRounds, renchan := matchConfigFor(rule)
+		_, err := match.RunMatch(match.Config{
+			Rule:          rule,
+			Players:       players,
+			InitialDealer: 0,
+			MaxRounds:     maxRounds,
+			Renchan:       renchan,
+		}, log, obs)
 		if err != nil {
 			prog.Send(tui.RoundDoneMsg{Err: err})
 		}

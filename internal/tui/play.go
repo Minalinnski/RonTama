@@ -90,6 +90,12 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Note != "" {
 			m.log = appendLog(m.log, msg.Note, 12)
 		}
+		// A new round just started — clear the "round done" banner so
+		// subsequent rounds of a match re-enter normal play mode.
+		if msg.Note == "Round start" {
+			m.roundDone = false
+			m.finalNote = ""
+		}
 		return m, nil
 
 	case HumanPromptMsg:

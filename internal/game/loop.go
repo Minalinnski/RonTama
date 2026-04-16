@@ -81,6 +81,35 @@ func RunRound(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *s
 // RunRoundWithObserver is RunRound + an Observer that gets notified at
 // every public state change. Used by the TUI to drive view updates.
 func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer int, log *slog.Logger, obs Observer) (*RoundResult, error) {
+	return RunRoundOpts(RoundOpts{Rule: rule, Players: players, Dealer: dealer, Log: log, Observer: obs})
+}
+
+// RoundOpts configures a round run. Used by the Match wrapper to seed
+// cumulative scores / honba / carried riichi pot before the round starts.
+type RoundOpts struct {
+	Rule     rules.RuleSet
+	Players  [NumPlayers]Player
+	Dealer   int
+	Log      *slog.Logger
+	Observer Observer
+
+	// Optional starting state. If nil, seats use rule.StartingScore().
+	InitialScores *[NumPlayers]int
+	// Carried riichi sticks from a previous exhaustive draw.
+	CarryRiichiPot int
+	// Honba (本場) counter — displayed to observers; bonus effect on
+	// payouts is a Phase-TODO for proper Riichi scoring.
+	Honba int
+}
+
+// RunRoundOpts is the flexible entrypoint used by both single-round
+// callers (via RunRoundWithObserver) and the Match wrapper.
+func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
+	rule := opts.Rule
+	players := opts.Players
+	dealer := opts.Dealer
+	log := opts.Log
+	obs := opts.Observer
 	if log == nil {
 		log = slog.Default()
 	}
@@ -91,6 +120,12 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 	if err != nil {
 		return nil, err
 	}
+	if opts.InitialScores != nil {
+		for i := 0; i < NumPlayers; i++ {
+			st.Players[i].Score = opts.InitialScores[i]
+		}
+	}
+	st.RiichiPot = opts.CarryRiichiPot
 	// Seed seat names from the player implementations so observers
 	// (TUI panels, network StateUpdates) can show who's who.
 	for i := 0; i < NumPlayers; i++ {
