@@ -11,8 +11,15 @@ import (
 
 	"github.com/Minalinnski/RonTama/internal/game"
 	"github.com/Minalinnski/RonTama/internal/rules"
+	"github.com/Minalinnski/RonTama/internal/shanten"
 	"github.com/Minalinnski/RonTama/internal/tile"
 )
+
+// computeShantenMin is the min-over-forms shanten (standard / chiitoi /
+// kokushi). Used by canRiichiNow.
+func computeShantenMin(c [tile.NumKinds]int, melds int) int {
+	return shanten.Of(c, melds)
+}
 
 // HumanSeat is fixed at seat 0 (South). The TUI human always plays
 // from the bottom of the table layout.
@@ -276,10 +283,10 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 		m.prompt = nil
 	case "r":
-		// Riichi declaration: discard the currently-selected tile
-		// AND set DeclareRiichi=true. The game loop validates eligibility
-		// (concealed, score>=1000, wall>=4, post-discard tenpai) and
-		// rejects with an error if invalid; bots/humans should self-check.
+		// Riichi declaration: discard the currently-selected tile AND
+		// set DeclareRiichi=true. Gated client-side on canRiichiNow —
+		// if the selected tile doesn't leave the hand tenpai (or any
+		// other precondition fails), the key is silently ignored.
 		if m.selected < 0 || m.selected > maxIdx {
 			break
 		}
@@ -288,6 +295,9 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			discard = sorted[m.selected]
 		} else if drawn != nil {
 			discard = *drawn
+		}
+		if !canRiichiNow(m.prompt.View, discard) {
+			return m, nil
 		}
 		m.prompt.Respond <- game.DrawAction{
 			Kind: game.DrawDiscard, Discard: discard, DeclareRiichi: true,
@@ -333,6 +343,52 @@ func (m PlayModel) handleCallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt = nil
 	}
 	return m, nil
+}
+
+// canRiichiNow returns true when the player can declare riichi by
+// discarding `candidate` this turn:
+//   - the rule supports riichi (Riichi only, not Sichuan)
+//   - no open melds (ankans are OK; we're permissive and accept any)
+//   - score >= 1000, wall >= 4
+//   - not already in riichi
+//   - discarding `candidate` leaves the hand at tenpai (shanten == 0)
+//
+// Mirrors the server-side validateRiichiDeclaration so the TUI can
+// gate the 'r' key and hint accurately.
+func canRiichiNow(view game.PlayerView, candidate tile.Tile) bool {
+	if view.Rule.RequiresDingque() {
+		return false
+	}
+	if view.Riichi[view.Seat] {
+		return false
+	}
+	if view.Scores[view.Seat] < 1000 {
+		return false
+	}
+	if view.WallLeft < 4 {
+		return false
+	}
+	hand := view.OwnHand
+	for _, m := range hand.Melds {
+		if m.Kind != tile.ConcealedKan {
+			return false
+		}
+	}
+	concealed := hand.Concealed
+	if concealed[candidate] == 0 {
+		return false
+	}
+	concealed[candidate]--
+	probe := tile.Hand{Concealed: concealed, Melds: hand.Melds}
+	return tileShanten(probe) == 0
+}
+
+// tileShanten is a thin wrapper for the shanten computation used by
+// canRiichiNow. Lives in play.go to avoid cycling internal/shanten.
+func tileShanten(h tile.Hand) int {
+	// Delegate via the Rule: Rule interface doesn't expose shanten,
+	// so use the shanten package directly via a level of indirection.
+	return computeShantenMin(h.Concealed, len(h.Melds))
 }
 
 // canTsumoNow returns true when the current draw makes a winning hand
@@ -810,10 +866,27 @@ func (m PlayModel) renderPrompt() string {
 		if canTsumoNow(m.prompt.View) {
 			tsumoHint = "  t=自摸"
 		}
-		// Show the riichi hint only for Riichi rules (not Sichuan).
+		// Riichi hint tracks the currently-selected tile: only shown
+		// when discarding THAT tile would produce a valid riichi
+		// declaration (concealed + tenpai after discard + wall/score
+		// preconditions). Navigation with ←/→ makes the hint
+		// appear/disappear, so the player can visually find a tile
+		// that lets them declare.
 		riichiHint := ""
 		if !m.prompt.View.Rule.RequiresDingque() {
-			riichiHint = "  r=立直"
+			sorted, drawn := splitDrawn(m.prompt.View.OwnHand, m.prompt.View.JustDrew)
+			var sel tile.Tile
+			ok := false
+			if m.selected >= 0 && m.selected < len(sorted) {
+				sel = sorted[m.selected]
+				ok = true
+			} else if drawn != nil && m.selected == len(sorted) {
+				sel = *drawn
+				ok = true
+			}
+			if ok && canRiichiNow(m.prompt.View, sel) {
+				riichiHint = "  r=立直"
+			}
 		}
 		return promptStyle.Render(fmt.Sprintf(
 			"Your turn — %s.  ←/→ or 1-9/a-e select  space=discard%s%s  q=quit%s",

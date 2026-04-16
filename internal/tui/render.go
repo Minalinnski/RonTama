@@ -9,18 +9,38 @@ import (
 	"github.com/Minalinnski/RonTama/internal/tile"
 )
 
-// suitStyle returns the foreground style for a tile's suit.
+// suitStyle returns the foreground style for a tile — used for the
+// face (character) rendering. Dragons split to their own colours so
+// 中/發/白 match the real tile faces.
 func suitStyle(t tile.Tile) lipgloss.Style {
+	s := lipgloss.NewStyle()
 	switch t.Suit() {
 	case tile.SuitMan:
-		return lipgloss.NewStyle().Foreground(manColor)
+		return s.Foreground(manColor)
 	case tile.SuitPin:
-		return lipgloss.NewStyle().Foreground(pinColor)
+		return s.Foreground(pinColor)
 	case tile.SuitSou:
-		return lipgloss.NewStyle().Foreground(souColor)
-	default:
-		return lipgloss.NewStyle().Foreground(honorColor)
+		return s.Foreground(souColor)
+	case tile.SuitWind:
+		return s.Foreground(windColor)
+	case tile.SuitDragon:
+		switch t {
+		case tile.Red:
+			return s.Foreground(redDragonColor)
+		case tile.Green:
+			return s.Foreground(greenDragonColor)
+		case tile.White:
+			return s.Foreground(whiteDragonColor)
+		}
 	}
+	return s.Foreground(chromeColor)
+}
+
+// tileFaceStyle returns the style used inside a tile box: the suit
+// foreground on the ivory tile-face background. Centralised so every
+// box uses the same face look.
+func tileFaceStyle(t tile.Tile) lipgloss.Style {
+	return suitStyle(t).Background(tileFaceColor)
 }
 
 // renderTileCompact renders a tile as a colored 2-3 char inline token
@@ -29,18 +49,18 @@ func renderTileCompact(t tile.Tile) string {
 	return suitStyle(t).Render(t.String())
 }
 
-// renderTileBox renders a tile as a small bordered box, used in the
-// concealed hand area where the player needs to "see" each tile.
+// renderTileBox renders a tile as a small bordered box with an ivory
+// face and a suit-coloured character: looks like a real mahjong tile.
 //
 // 3-wide box: ╭──╮
-//             │1m│
+//             │1m│    ← ivory face, red/blue/green ink
 //             ╰──╯
 //
-// Selected state changes the border color rather than wrapping the box in
-// another style — wrapping a multi-line border with Underline/Bold breaks
-// JoinHorizontal alignment in Lipgloss.
+// Selected state switches the border colour to gold instead of
+// re-styling the multi-line body (which breaks JoinHorizontal alignment
+// in Lipgloss).
 func renderTileBox(t tile.Tile, selected bool) string {
-	body := suitStyle(t).Render(fmt.Sprintf("%-2s", t.String()))
+	body := tileFaceStyle(t).Render(fmt.Sprintf("%-2s", t.String()))
 	bc := chromeColor
 	if selected {
 		bc = selectedColor

@@ -2,20 +2,29 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Color palette: suits get distinct hues, neutral grays for chrome.
+// Color palette: physical-mahjong look — tile faces are white, with
+// ink colours per suit (萬紅 / 筒藍 / 索綠, 風黑, 中紅 / 發綠 / 白灰).
 var (
-	manColor     = lipgloss.Color("#E45757") // 萬 - red
-	pinColor     = lipgloss.Color("#3A8FE6") // 筒 - blue
-	souColor     = lipgloss.Color("#3FB76C") // 索 - green
-	honorColor   = lipgloss.Color("#E0E0E0") // 字 - white
-	dingqueColor = lipgloss.Color("#7A7A7A") // dimmed for renounced suit
+	// Tile ink colours. Chosen to read well on a white tile background.
+	manColor        = lipgloss.Color("#C51A1A") // 萬 — red
+	pinColor        = lipgloss.Color("#1E5FB8") // 筒 — blue
+	souColor        = lipgloss.Color("#1A7A3A") // 索 — green
+	windColor       = lipgloss.Color("#101010") // 東南西北 — black
+	redDragonColor  = lipgloss.Color("#C51A1A") // 中 — red
+	greenDragonColor = lipgloss.Color("#1A7A3A") // 發 — green
+	whiteDragonColor = lipgloss.Color("#7A7A7A") // 白 — grey (traditionally a blank face)
 
+	// The tile face background.
+	tileFaceColor = lipgloss.Color("#F2EFE6") // ivory white
+
+	// Chrome / UI palette.
+	dingqueColor  = lipgloss.Color("#7A7A7A")
 	chromeColor   = lipgloss.Color("#9A9A9A")
 	headerColor   = lipgloss.Color("#FFB000")
 	selectedColor = lipgloss.Color("#FFD700")
 	winColor      = lipgloss.Color("#FF77FF")
-	turnColor     = lipgloss.Color("#7AE1FF") // current-player highlight
-	tableColor    = lipgloss.Color("#5A4A1F") // center "table" panel border
+	turnColor     = lipgloss.Color("#7AE1FF")
+	tableColor    = lipgloss.Color("#5A4A1F")
 	dimColor      = lipgloss.Color("#4A4A4A")
 )
 
