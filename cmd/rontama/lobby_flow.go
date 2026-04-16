@@ -38,21 +38,23 @@ func matchConfigFor(rule rules.RuleSet) (maxRounds int, renchan bool) {
 // If joining fails (connection refused, timeout, etc.), it loops back
 // to the lobby so the user can retry or pick a different option.
 func runLobbyFlow() error {
-	res, err := tui.RunLobby()
-	if err != nil {
-		return err
+	for {
+		res, err := tui.RunLobby()
+		if err != nil {
+			return err
+		}
+		switch res.Mode {
+		case tui.LobbyModeQuit:
+			return nil // only real exit
+		case tui.LobbyModeLocal:
+			_ = runLobbyLocal(res)
+		case tui.LobbyModeHost:
+			_ = runLobbyHost(res)
+		case tui.LobbyModeJoin:
+			_ = runLobbyJoin(res)
+		}
+		// Game/room ended (quit, disconnect, round over) → back to lobby.
 	}
-	switch res.Mode {
-	case tui.LobbyModeQuit:
-		return nil
-	case tui.LobbyModeLocal:
-		return runLobbyLocal(res)
-	case tui.LobbyModeHost:
-		return runLobbyHost(res)
-	case tui.LobbyModeJoin:
-		return runLobbyJoin(res)
-	}
-	return nil
 }
 
 // runLobbyLocal: single-process play, you at seat 0 + bots from lobby config.
