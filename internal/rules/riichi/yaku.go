@@ -83,6 +83,10 @@ func (Rule) evaluate(hand tile.Hand, winTile tile.Tile, ctx rules.WinContext, st
 			res.Yaku = append(res.Yaku, "役牌×"+itoa(yh))
 		}
 	}
+	// NOTE: countYakuhai defaults RoundWind to East when the caller
+	// passes 0 (unset). This was previously a logic bug (line 192 had
+	// || instead of the correct default-then-check pattern). The fix
+	// is in countYakuhai below.
 
 	if chiitoi {
 		addYaku("七対子", 2)
@@ -186,18 +190,23 @@ func countYakuhai(c [tile.NumKinds]int, melds []tile.Meld, ctx rules.WinContext)
 			}
 		}
 	}
+	// Dragons are always yakuhai.
 	check(tile.White)
 	check(tile.Green)
 	check(tile.Red)
-	if ctx.RoundWind != 0 || ctx.RoundWind == tile.East {
-		// Default to East round if unset.
-		rw := ctx.RoundWind
-		if rw < tile.East || rw > tile.North {
-			rw = tile.East
-		}
-		check(rw)
+	// Round wind: default to East when unset (value 0). The old code
+	// had `!= 0 || == East` which was logically wrong — fixed now.
+	rw := ctx.RoundWind
+	if rw < tile.East || rw > tile.North {
+		rw = tile.East
 	}
-	check(ctx.SeatWind())
+	check(rw)
+	// Seat wind.
+	sw := ctx.SeatWind()
+	// Avoid double-counting when seat wind == round wind: the player
+	// gets 2 han (one for each), which is handled by calling check()
+	// twice — both the rw and sw check contribute independently.
+	check(sw)
 	return count
 }
 

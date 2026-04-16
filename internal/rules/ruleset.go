@@ -173,6 +173,10 @@ type RuleHooks interface {
 	// ConsumeRiichiPot zeroes the pot and returns the old value (for
 	// awarding to winner).
 	ConsumeRiichiPot() int
+
+	// IsRiichi reports whether a seat has declared riichi this round.
+	// Used by PlayerView to populate IsRiichi field.
+	IsRiichi(seat int) bool
 }
 
 // DrawAction mirrors game.DrawAction to break the import cycle
@@ -206,26 +210,30 @@ type Call struct {
 // StateAccessor is a narrow read/write interface into game.State that
 // the hooks package can use without importing internal/game (which
 // would create a cycle). The game loop implements this on *State.
+// StateAccessor is a narrow read/write interface into game.State.
+// Method names use Get* prefix to avoid colliding with the exported
+// field names on game.State (Go forbids a struct from having both a
+// field and a method with the same name).
 type StateAccessor interface {
 	// Reads
-	NumPlayers() int
-	Dealer() int
-	Current() int
-	TurnsTaken() int
-	WallRemaining() int
-	PlayerConcealed(seat int) [tile.NumKinds]int
-	PlayerMelds(seat int) []tile.Meld
-	PlayerScore(seat int) int
-	PlayerDingque(seat int) tile.Suit
-	PlayerJustDrew(seat int) *tile.Tile
-	PlayerHasWon(seat int) bool
-	PlayerName(seat int) string
-	Discards(seat int) []tile.Tile
-	AllowsChi() bool
-	AfterKan() bool
-	LastTile() bool
+	GetNumPlayers() int
+	GetDealer() int
+	GetCurrent() int
+	GetTurnsTaken() int
+	GetWallRemaining() int
+	GetPlayerConcealed(seat int) [tile.NumKinds]int
+	GetPlayerMelds(seat int) []tile.Meld
+	GetPlayerScore(seat int) int
+	GetPlayerDingque(seat int) tile.Suit
+	GetPlayerJustDrew(seat int) *tile.Tile
+	GetPlayerHasWon(seat int) bool
+	GetPlayerName(seat int) string
+	GetDiscards(seat int) []tile.Tile
+	GetAllowsChi() bool
+	GetAfterKan() bool
+	GetLastTile() bool
 
-	// Writes (hooks need to mutate some state)
+	// Writes
 	SetPlayerScore(seat int, score int)
 	SetAfterKan(v bool)
 	SetRuleState(v any)

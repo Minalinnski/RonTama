@@ -30,10 +30,12 @@ import (
 	"github.com/Minalinnski/RonTama/internal/tile"
 )
 
-// Rule is the Riichi mahjong ruleset.
+// Rule is the Riichi mahjong ruleset. Uses pointer receiver so
+// Hooks() can capture a back-reference.
 type Rule struct{}
 
-// New returns the Riichi ruleset.
+// New returns the Riichi ruleset. Use *Rule (pointer receiver) so
+// Hooks() can return a &Hooks{rule: r} back-reference.
 func New() *Rule { return &Rule{} }
 
 // Name implements rules.RuleSet.
@@ -60,13 +62,10 @@ func (Rule) RequiresDingque() bool { return false }
 // RequiresExchange3 is false.
 func (Rule) RequiresExchange3() bool { return false }
 
-// Hooks returns the Riichi-specific lifecycle hooks. These manage dead
-// wall, dora indicators, furiten tracking, ippatsu window, riichi
-// declaration validation, and post-riichi tsumogiri enforcement.
-//
-// TODO(phase2): return a real *Hooks implementation. For now returns
-// nil to keep the build green while the refactor is in progress.
-func (Rule) Hooks() rules.RuleHooks { return nil }
+// Hooks returns the Riichi-specific lifecycle hooks.
+func (r *Rule) Hooks() rules.RuleHooks {
+	return NewHooks(r, tile.East) // round wind default; overridden by match via RuleState
+}
 
 // CanWin returns true if hand+winningTile is a standard, chiitoi, or
 // kokushi shape AND has at least one yaku (otherwise no-yaku → no-win).

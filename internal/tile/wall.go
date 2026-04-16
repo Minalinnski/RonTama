@@ -53,14 +53,13 @@ func (w *Wall) Draw() (Tile, bool) {
 // first pair's upper tile is the initial dora indicator; the rest
 // are used for kan-replacement draws and additional dora flips.
 //
-// Must be called AFTER NewWall and BEFORE any Draw calls (Drawn == 0).
-// Panics if the wall is too small or draws have already started.
+// Safe to call after dealing (Drawn > 0) — it removes from the end,
+// which doesn't affect already-drawn tiles. Panics if there aren't
+// enough remaining tiles.
 func (w *Wall) SplitDeadWall(n int) []Tile {
-	if w.Drawn != 0 {
-		panic("SplitDeadWall: draws already started")
-	}
-	if n > len(w.Tiles) {
-		panic(fmt.Sprintf("SplitDeadWall: n=%d > wall size %d", n, len(w.Tiles)))
+	remaining := len(w.Tiles) - w.Drawn
+	if n > remaining {
+		panic(fmt.Sprintf("SplitDeadWall: n=%d > remaining %d", n, remaining))
 	}
 	split := len(w.Tiles) - n
 	dead := make([]Tile, n)

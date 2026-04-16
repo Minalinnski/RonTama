@@ -133,6 +133,14 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 			st.Players[i].Name = players[i].Name()
 		}
 	}
+	// ---- RuleHooks integration ----
+	// hooks is nil for Sichuan (no rule-specific lifecycle). For Riichi,
+	// hooks manage dead wall, dora, furiten, ippatsu, riichi state —
+	// keeping the loop below variant-agnostic.
+	hooks := rule.Hooks()
+	if hooks != nil {
+		hooks.OnRoundSetup(st)
+	}
 	obs.OnRoundStart(st)
 
 	// Phase 1a: exchange-three (Sichuan 换三张). Each player picks 3
@@ -191,10 +199,20 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 		}
 		var drawn tile.Tile
 		if st.skipNextDraw {
-			// Post-pon: the caller absorbed the discarded tile via the
-			// meld, so don't pull from the wall. They must discard.
+			// Post-pon/chi: the caller absorbed the discarded tile via
+			// the meld, so don't pull from the wall. They must discard.
 			st.skipNextDraw = false
 			st.Players[seat].JustDrew = nil
+		} else if st.AfterKan {
+			// Kan-replacement draw (嶺上牌): draw from the END of the
+			// wall (closest to the dead wall). This is the tile the kan
+			// player uses; if they win on it, it's 嶺上開花.
+			d, ok := st.Wall.DrawFromBack()
+			if !ok {
+				result.Exhaustion = true
+				break
+			}
+			drawn = d
 		} else {
 			d, ok := st.Wall.Draw()
 			if !ok {
@@ -212,29 +230,24 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 
 		action := players[seat].OnDraw(st.View(seat))
 
-		// If tsumo was declared but turns out invalid (no yaku, post-call
-		// hand without kan-replacement, etc.), don't kill the round —
-		// log a warning and downgrade to a discard of the drawn tile.
-		// The Player implementation has a contract bug to fix; the
-		// game continues so the table doesn't blow up under the user.
+		// Hooks validation: check the action BEFORE processing. Hooks
+		// may reject (e.g. post-riichi player trying to discard a
+		// non-drawn tile) or apply side effects (riichi declaration:
+		// debit 1000, set flag, open ippatsu window).
+		if hooks != nil {
+			if err := hooks.ValidateAction(st, seat, toRulesDrawAction(action)); err != nil {
+				log.Warn("hooks rejected action — falling back to discard", "seat", seat, "err", err)
+				action = DrawAction{Kind: DrawDiscard, Discard: drawn}
+			}
+		}
+
+		// If tsumo was declared, validate via CanWin before committing.
 		if action.Kind == DrawTsumo {
 			if st.Players[seat].JustDrew == nil {
 				log.Warn("invalid tsumo (no draw) — falling back to discard", "seat", seat)
 				action = DrawAction{Kind: DrawDiscard, Discard: drawn}
 			} else {
-				ctx := rules.WinContext{
-					WinningTile: drawn,
-					Tsumo:       true,
-					From:        -1,
-					Seat:        seat,
-					Dealer:      st.Dealer,
-					Dingque:     st.Players[seat].Dingque,
-					LastTile:    st.LastTile,
-					AfterKan:    st.AfterKan,
-					Riichi:      st.Riichi[seat],
-					Ippatsu:     st.IppatsuValid[seat],
-					RoundWind:   tile.East,
-				}
+				ctx := buildCtx(hooks, st, seat, drawn, true, -1)
 				st.Players[seat].Hand.Remove(drawn)
 				if !rule.CanWin(st.Players[seat].Hand, drawn, ctx) {
 					st.Players[seat].Hand.Add(drawn)
@@ -248,22 +261,10 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 
 		switch action.Kind {
 		case DrawTsumo:
-			ctx := rules.WinContext{
-				WinningTile: drawn,
-				Tsumo:       true,
-				From:        -1,
-				Seat:        seat,
-				Dealer:      st.Dealer,
-				Dingque:     st.Players[seat].Dingque,
-				LastTile:    st.LastTile,
-				AfterKan:    st.AfterKan,
-				Riichi:      st.Riichi[seat],
-				Ippatsu:     st.IppatsuValid[seat],
-				RoundWind:   tile.East,
-			}
+			ctx := buildCtx(hooks, st, seat, drawn, true, -1)
 			st.Players[seat].Hand.Remove(drawn)
 			score := rule.ScoreWin(st.Players[seat].Hand, drawn, ctx)
-			applySettlement(st, seat, ctx, score)
+			applySettlementWithHooks(hooks, st, seat, ctx, score)
 			win := WinEvent{Seat: seat, Tsumo: true, From: -1, Tile: drawn, Score: score}
 			result.Wins = append(result.Wins, win)
 			obs.OnWin(st, win)
@@ -281,8 +282,12 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 			if st.Players[seat].Hand.Concealed[discard] == 0 {
 				return nil, fmt.Errorf("seat %d tried to discard %s but hand has 0", seat, discard)
 			}
-			// Riichi declaration: validate before mutating state.
-			if action.DeclareRiichi {
+			// Riichi declaration: hooks.ValidateAction already applied the
+			// side effects (debit 1000, set riichi flag, open ippatsu) if
+			// hooks are active. For hookless (Sichuan), riichi is never
+			// declared so this block is a no-op.
+			if action.DeclareRiichi && hooks == nil {
+				// Legacy path (should never trigger for Sichuan, but defensive).
 				if err := validateRiichiDeclaration(st, seat, discard); err != nil {
 					return nil, fmt.Errorf("seat %d invalid riichi: %w", seat, err)
 				}
@@ -290,27 +295,31 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 				st.RiichiPot += 1000
 				st.Riichi[seat] = true
 				st.IppatsuValid[seat] = true
+			}
+			if action.DeclareRiichi {
 				log.Info("riichi", "seat", seat, "discard", discard)
 			}
 			st.Players[seat].Hand.Remove(discard)
 			st.Players[seat].JustDrew = nil
 			st.Discards[seat] = append(st.Discards[seat], discard)
 			st.AfterKan = false
-			// Ippatsu invalidation: a player's own discard AFTER their
-			// riichi declaration closes their ippatsu window. Pon/kan
-			// invalidation happens in resolveCalls when the call is applied.
-			if !action.DeclareRiichi && st.Riichi[seat] {
-				st.IppatsuValid[seat] = false
+			// Hooks-driven post-discard bookkeeping (furiten, ippatsu).
+			if hooks != nil {
+				hooks.AfterDiscard(st, seat, discard)
+			} else {
+				// Legacy ippatsu (Sichuan: always no-op since Riichi is false).
+				if !action.DeclareRiichi && st.Riichi[seat] {
+					st.IppatsuValid[seat] = false
+				}
 			}
 			obs.OnDiscard(st, seat, discard)
 			log.Debug("discard", "seat", seat, "tile", discard)
 
-			// Solicit calls from other live seats. In Sichuan, multiple
-			// players may ron the same discard ("一炮多响"). Pon/kan are
-			// exclusive — first taker wins (priority order: ron > kan > pon).
-			calls := st.AvailableCallsOnDiscard(discard, seat)
+			// Solicit calls from other live seats. Hooks filter (furiten,
+			// riichi-no-call). Pon/kan are exclusive — first taker wins.
+			calls := availableCalls(hooks, st, discard, seat)
 			if len(calls) > 0 {
-				next := resolveCalls(st, players, calls, discard, seat, log, obs)
+				next := resolveCalls(hooks, st, players, calls, discard, seat, log, obs)
 				if next.endRound {
 					// All wins settled in resolveCalls; round may continue if not Done.
 					st.Current = next.nextSeat
@@ -345,6 +354,9 @@ func RunRoundOpts(opts RoundOpts) (*RoundResult, error) {
 	for i := 0; i < NumPlayers; i++ {
 		result.FinalScores[i] = st.Players[i].Score
 	}
+	if hooks != nil {
+		hooks.OnRoundEnd(st)
+	}
 	obs.OnRoundEnd(st, result)
 	return result, nil
 }
@@ -361,7 +373,7 @@ type callResolution struct {
 // Each eligible player is asked ONCE with all their applicable options
 // (e.g. a player who could ron AND pon sees both choices and picks one).
 // Ron always wins over pon/kan; multi-ron is allowed (一炮多响).
-func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard tile.Tile, from int, log *slog.Logger, obs Observer) callResolution {
+func resolveCalls(hooks rules.RuleHooks, st *State, players [NumPlayers]Player, calls []Call, discard tile.Tile, from int, log *slog.Logger, obs Observer) callResolution {
 	// Group calls by player.
 	byPlayer := map[int][]Call{}
 	for _, c := range calls {
@@ -390,21 +402,9 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		_ = choices // pon/kan/chi choices ignored when ron wins
 		out := callResolution{endRound: false}
 		for _, r := range declaredRons {
-			ctx := rules.WinContext{
-				WinningTile: discard,
-				Tsumo:       false,
-				From:        from,
-				Seat:        r.Player,
-				Dealer:      st.Dealer,
-				Dingque:     st.Players[r.Player].Dingque,
-				LastTile:    st.LastTile,
-				KanGrab:     st.GrabbableKanTile != nil && *st.GrabbableKanTile == discard,
-				Riichi:      st.Riichi[r.Player],
-				Ippatsu:     st.IppatsuValid[r.Player],
-				RoundWind:   tile.East,
-			}
+			ctx := buildCtx(hooks, st, r.Player, discard, false, from)
 			score := st.Rule.ScoreWin(st.Players[r.Player].Hand, discard, ctx)
-			applySettlement(st, r.Player, ctx, score)
+			applySettlementWithHooks(hooks, st, r.Player, ctx, score)
 			win := WinEvent{Seat: r.Player, Tsumo: false, From: from, Tile: discard, Score: score}
 			out.wins = append(out.wins, win)
 			st.Players[r.Player].HasWon = true
@@ -454,9 +454,12 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		applyCall(st, c, discard, from)
 		obs.OnCall(st, c.Kind, c.Player, from, discard)
 		log.Debug("call", "kind", c.Kind, "seat", c.Player, "tile", discard)
-		// Any call invalidates ippatsu for every riichi'd player.
-		for s := 0; s < NumPlayers; s++ {
-			st.IppatsuValid[s] = false
+		if hooks != nil {
+			hooks.AfterCall(st, toRulesCallKind(c.Kind), c.Player, from)
+		} else {
+			for s := 0; s < NumPlayers; s++ {
+				st.IppatsuValid[s] = false
+			}
 		}
 		switch c.Kind {
 		case CallPon, CallChi:

@@ -31,6 +31,11 @@ type State struct {
 	// Per-seat discard piles ("river").
 	Discards [NumPlayers][]tile.Tile
 
+	// RuleState holds variant-specific opaque state, set by
+	// hooks.OnRoundSetup(). For Riichi: *riichi.HooksState containing
+	// dead wall, dora, furiten, ippatsu, riichi flags. For Sichuan: nil.
+	RuleState any
+
 	// Counters
 	TurnsTaken int
 
@@ -134,10 +139,15 @@ func (s *State) View(seat int) PlayerView {
 		JustDrew:   s.Players[seat].JustDrew,
 		TurnsTaken: s.TurnsTaken,
 	}
+	hooks := s.Rule.Hooks()
 	for i := 0; i < NumPlayers; i++ {
 		v.Dingque[i] = s.Players[i].Dingque
 		v.HasWon[i] = s.Players[i].HasWon
-		v.Riichi[i] = s.Riichi[i]
+		if hooks != nil {
+			v.Riichi[i] = hooks.IsRiichi(i)
+		} else {
+			v.Riichi[i] = s.Riichi[i]
+		}
 		v.Discards[i] = s.Discards[i]
 		v.Melds[i] = s.Players[i].Hand.Melds
 		v.Scores[i] = s.Players[i].Score
