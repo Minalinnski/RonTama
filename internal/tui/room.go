@@ -106,14 +106,22 @@ func renderRoom(room *RoomState, startSent bool) string {
 		b.WriteString(fmt.Sprintf("\n  %s  %d/%d players\n", bar, room.Filled, room.Total))
 	}
 
-	// IPs (host only)
+	// IPs (host only). Port comes from room.Message ("Listening on port XXXX").
 	if room.ShowIPs {
 		addrs := discovery.LocalIPv4Addrs()
 		if len(addrs) > 0 {
+			// Extract port from Message if present, else default 7777.
+			port := "7777"
+			if strings.Contains(room.Message, "port ") {
+				parts := strings.SplitAfter(room.Message, "port ")
+				if len(parts) > 1 {
+					port = strings.TrimSpace(parts[1])
+				}
+			}
 			b.WriteString("\n")
 			b.WriteString(chromeStyle.Render("  朋友加入: Join by IP →"))
 			for _, a := range addrs {
-				b.WriteString(fmt.Sprintf(" %s:7777", a))
+				b.WriteString(fmt.Sprintf(" %s:%s", a, port))
 			}
 			b.WriteString("\n")
 		}

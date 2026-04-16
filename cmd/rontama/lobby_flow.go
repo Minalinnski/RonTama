@@ -110,10 +110,9 @@ func runLobbyHost(res tui.LobbyResult) error {
 	defer cancel()
 
 	if !res.HostBot {
-		// Pure server. Pre-bind so firewall dialog is visible.
-		ln, err := net.Listen("tcp", ":7777")
-		if err != nil {
-			return fmt.Errorf("listen :7777: %w", err)
+		ln, _ := listenWithFallback(7777)
+		if ln == nil {
+			return fmt.Errorf("could not bind any port")
 		}
 		defer ln.Close()
 		fmt.Fprintf(os.Stderr, "✓ Server listening on :7777\n")
@@ -135,19 +134,17 @@ func runLobbyHost(res tui.LobbyResult) error {
 	//    the NORMAL terminal (not hidden behind alt-screen)
 	// 2. Port :7777 is definitely listening before any client tries
 	// 3. No race condition between server goroutine and TUI startup
-	ln, err := net.Listen("tcp", ":7777")
-	if err != nil {
-		return fmt.Errorf("listen :7777: %w (check if port is in use or macOS firewall is blocking)", err)
+	ln, port := listenWithFallback(7777)
+	if ln == nil {
+		return fmt.Errorf("could not bind any port (7777-7787)")
 	}
 	defer ln.Close()
-
-	// No stderr prints or sleeps — go straight into the TUI.
-	// The Room view shows the IP; macOS firewall dialog (if any)
-	// appeared when net.Listen bound the port above.
 	startCh := make(chan struct{}, 1)
 	model := tui.NewPlayModel(rule)
 	model.StartChan = startCh
-	model.Room = buildHostRoom(res) // initial room state
+	room := buildHostRoom(res)
+	room.Message = fmt.Sprintf("Listening on port %d", port)
+	model.Room = room
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	players := buildServerSeatsNamed(res, prog, res.PlayerName)
 	obs := tui.NewTUIObserver(prog)
@@ -167,7 +164,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 
 	go func() {
 		cfg := server.Config{
-			Addr:          ":7777",
+			Addr:          fmt.Sprintf(":%d", port),
 			JoinTimeout:   res.Wait,
 			Log:           log,
 			Rule:          rule,
@@ -246,6 +243,20 @@ func playerFromRoleNamed(role tui.SeatRole, seat int, prog *tea.Program, humanNa
 		return hard.New(fmt.Sprintf("Hard bot %d", seat))
 	}
 	return nil
+}
+
+// listenWithFallback tries to bind :preferredPort. If it's in use, tries
+// :preferredPort+1 through +10. Returns the listener and actual port,
+// or (nil, 0) if all failed. This prevents "address already in use"
+// crashes when a previous rontama didn't release the port cleanly.
+func listenWithFallback(preferredPort int) (net.Listener, int) {
+	for p := preferredPort; p <= preferredPort+10; p++ {
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+		if err == nil {
+			return ln, p
+		}
+	}
+	return nil, 0
 }
 
 // buildLocalRoom creates the initial room for local play (all seats filled).
