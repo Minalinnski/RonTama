@@ -97,31 +97,30 @@ func runLobbyHost(res tui.LobbyResult) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// All server logs go to Discard — no stderr leaks behind TUI.
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Announce via mDNS so joiners can auto-discover.
-	if closer, dErr := discovery.Announce("", 7777, []string{"rule=" + res.Rule}); dErr == nil {
+	// 1. Bind listener FIRST (OS picks port). This triggers macOS
+	//    firewall dialog on the normal terminal before alt-screen.
+	ln, port, err := listenFreePort()
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	defer ln.Close()
+
+	// 2. mDNS announce with the ACTUAL port.
+	if closer, dErr := discovery.Announce("", port, []string{"rule=" + res.Rule}); dErr == nil {
 		defer closer.Close()
-		log.Info("mDNS announced", "service", discovery.ServiceType, "port", 7777)
-	} else {
-		// mDNS failed — joiners must use manual IP. Log prominently.
-		log.Warn("mDNS announce FAILED — joiners must use manual IP", "err", dErr)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	if !res.HostBot {
-		ln, port, err := listenFreePort()
-		if err != nil {
-			return fmt.Errorf("listen: %w", err)
-		}
-		defer ln.Close()
-		_ = port
-		fmt.Fprintf(os.Stderr, "✓ Server listening on :7777\n")
+		// Pure server (no TUI).
 		players := buildServerSeatsNamed(res, nil, res.PlayerName)
 		cfg := server.Config{
-			Addr:        ":7777",
+			Addr:        fmt.Sprintf(":%d", port),
 			JoinTimeout: res.Wait,
 			Log:         log,
 			Rule:        rule,
@@ -131,22 +130,12 @@ func runLobbyHost(res tui.LobbyResult) error {
 		return server.Run(ctx, cfg)
 	}
 
-	// CRITICAL: bind the TCP listener BEFORE entering Bubble Tea's
-	// alt-screen. This ensures:
-	// 1. macOS firewall "Allow incoming connections?" dialog appears on
-	//    the NORMAL terminal (not hidden behind alt-screen)
-	// 2. Port :7777 is definitely listening before any client tries
-	// 3. No race condition between server goroutine and TUI startup
-	ln, port, err := listenFreePort()
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	defer ln.Close()
+	// Host + play: TUI with pre-bound listener.
 	startCh := make(chan struct{}, 1)
 	model := tui.NewPlayModel(rule)
 	model.StartChan = startCh
 	room := buildHostRoom(res)
-	room.Message = fmt.Sprintf("Listening on port %d", port)
+	room.Port = port
 	model.Room = room
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	players := buildServerSeatsNamed(res, prog, res.PlayerName)
@@ -167,7 +156,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 
 	go func() {
 		cfg := server.Config{
-			Addr:          fmt.Sprintf(":%d", port),
+			Addr:          ln.Addr().String(),
 			JoinTimeout:   res.Wait,
 			Log:           log,
 			Rule:          rule,

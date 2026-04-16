@@ -40,11 +40,11 @@ type RoomState struct {
 	Rule     string // "sichuan" / "riichi"
 	CanStart bool   // true = host (show "s = start")
 	ShowIPs  bool   // true = host (show local IP addresses)
-	Message  string // bottom status ("Waiting for host..." / "Press s to start" / etc.)
+	Port     int    // actual listening port (OS-assigned)
+	Message  string // bottom status
 
-	// Filled/Total for progress bar. Filled = non-waiting seats.
 	Filled int
-	Total  int // total "expected" seats (remote slots)
+	Total  int
 }
 
 // RoomUpdateMsg updates the room state during the join phase.
