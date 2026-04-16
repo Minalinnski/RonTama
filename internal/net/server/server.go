@@ -182,10 +182,24 @@ func Run(ctx context.Context, cfg Config) error {
 	if ln != nil {
 		listenAddrStr = ln.Addr().String()
 	}
-	pushJoinEvent := func(done bool) {
-		if cfg.JoinChan == nil {
-			return
+	fmtJoinNote := func(ev JoinEvent) string {
+		msg := "🀄 Lobby: "
+		for i, name := range ev.Seats {
+			if name != "" {
+				msg += fmt.Sprintf("[%s] ", name)
+			} else {
+				msg += fmt.Sprintf("[seat%d:⏳] ", i)
+			}
 		}
+		msg += fmt.Sprintf("— %d/%d joined", ev.Filled, ev.Total)
+		if ev.Done {
+			msg += " — Starting!"
+		} else {
+			msg += " — Waiting for host to start"
+		}
+		return msg
+	}
+	pushJoinEvent := func(done bool) {
 		var seats [game.NumPlayers]string
 		for i := 0; i < game.NumPlayers; i++ {
 			if p := cfg.Players[i]; p != nil {
@@ -199,12 +213,20 @@ func Run(ctx context.Context, cfg Config) error {
 				}
 			}
 		}
-		cfg.JoinChan <- JoinEvent{
+		ev := JoinEvent{
 			Seats:      seats,
 			Filled:     connected,
 			Total:      len(remoteSeats),
 			Done:       done,
 			ListenAddr: listenAddrStr,
+		}
+		if cfg.JoinChan != nil {
+			cfg.JoinChan <- ev
+		}
+		// Also push lobby state to all connected clients.
+		note := fmtJoinNote(ev)
+		for _, sess := range sessions {
+			sess.Broadcast(proto.KindStateUpdate, proto.StateUpdate{Note: note})
 		}
 	}
 

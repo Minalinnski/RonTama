@@ -88,11 +88,10 @@ type PlayModel struct {
 	riichiMode  bool
 	riichiValid []bool // per-tile: true if discarding it leaves tenpai (len = sorted + drawn)
 
-	// Banner: optional pre-game info shown while state is nil.
-	Banner string
-
-	// StartChan: when non-nil, the host presses 's' and we send to
-	// this channel to tell the server to begin (even if seats aren't full).
+	// Room: structured pre-game lobby state. Replaces the old Banner
+	// string. Rendered by renderRoom() when state == nil. All 3 paths
+	// (local/host/join) populate this with their seat config.
+	Room      *RoomState
 	StartChan chan<- struct{}
 	startSent bool
 }
@@ -192,7 +191,29 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case JoinUpdateMsg:
-		m.Banner = formatJoinBanner(msg)
+		// Legacy: convert to RoomState.
+		room := &RoomState{
+			Rule:     m.rule.Name(),
+			CanStart: m.StartChan != nil,
+			ShowIPs:  m.StartChan != nil,
+			Filled:   msg.Filled,
+			Total:    msg.Total,
+		}
+		for i, name := range msg.Seats {
+			if name != "" {
+				room.Seats[i] = SeatInfo{Name: name, Status: SeatStatusJoined}
+			} else {
+				room.Seats[i] = SeatInfo{Status: SeatStatusWaiting}
+			}
+		}
+		if msg.Done {
+			room.Message = "Starting game!"
+		}
+		m.Room = room
+		return m, nil
+
+	case RoomUpdateMsg:
+		m.Room = &msg.Room
 		return m, nil
 	}
 	return m, nil
@@ -568,14 +589,7 @@ func countdownTick() tea.Cmd {
 // highlighted in cyan.
 func (m PlayModel) View() string {
 	if m.state == nil {
-		if m.Banner != "" {
-			return lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(headerColor).
-				Padding(1, 3).
-				Render(m.Banner)
-		}
-		return "Loading..."
+		return renderRoom(m.Room, m.startSent)
 	}
 	header := m.renderHeader()
 

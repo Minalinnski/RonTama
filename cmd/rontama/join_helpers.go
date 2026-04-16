@@ -36,6 +36,11 @@ func joinAsTUI(addr string, rule rules.RuleSet, log *slog.Logger) error {
 // joinAsTUINamed is like joinAsTUI but registers with the supplied display name.
 func joinAsTUINamed(addr string, rule rules.RuleSet, name string, log *slog.Logger) error {
 	model := tui.NewPlayModel(rule)
+	// Client room: starts with minimal info (seats unknown until server pushes).
+	model.Room = &tui.RoomState{
+		Rule:    rule.Name(),
+		Message: "Connecting to " + addr + "...",
+	}
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	decider := client.NewTUIDecider(prog, rule)
 	c, err := client.DialAs(addr, name, decider, log)

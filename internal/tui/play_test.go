@@ -24,8 +24,9 @@ func freshState(t *testing.T) *game.State {
 
 func TestPlayModel_LoadingViewBeforeState(t *testing.T) {
 	m := NewPlayModel(sichuan.New())
-	if !strings.Contains(m.View(), "Loading") {
-		t.Errorf("expected 'Loading' in initial view, got %q", m.View())
+	out := m.View()
+	if !strings.Contains(out, "Connecting") && !strings.Contains(out, "Game Room") {
+		t.Errorf("expected lobby/connecting view, got %q", out)
 	}
 }
 

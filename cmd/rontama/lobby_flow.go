@@ -69,6 +69,8 @@ func runLobbyLocal(res tui.LobbyResult) error {
 		return err
 	}
 	model := tui.NewPlayModel(rule)
+	// Set up a room with all seats filled (local play starts immediately).
+	model.Room = buildLocalRoom(res)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 
 	go func() {
@@ -152,8 +154,11 @@ func runLobbyHost(res tui.LobbyResult) error {
 	// Small delay so the user can see the message + click Allow if needed.
 	time.Sleep(500 * time.Millisecond)
 
-	// Now launch TUI.
+	// Now launch TUI. ALL model fields set BEFORE NewProgram (Bubble Tea copies the value).
+	startCh := make(chan struct{}, 1)
 	model := tui.NewPlayModel(rule)
+	model.StartChan = startCh
+	model.Room = buildHostRoom(res) // initial room state
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	players := buildServerSeatsNamed(res, prog, res.PlayerName)
 	obs := tui.NewTUIObserver(prog)
@@ -170,9 +175,6 @@ func runLobbyHost(res tui.LobbyResult) error {
 			})
 		}
 	}()
-
-	startCh := make(chan struct{}, 1)
-	model.StartChan = startCh
 
 	go func() {
 		cfg := server.Config{
@@ -255,6 +257,53 @@ func playerFromRoleNamed(role tui.SeatRole, seat int, prog *tea.Program, humanNa
 		return hard.New(fmt.Sprintf("Hard bot %d", seat))
 	}
 	return nil
+}
+
+// buildLocalRoom creates the initial room for local play (all seats filled).
+func buildLocalRoom(res tui.LobbyResult) *tui.RoomState {
+	room := &tui.RoomState{Rule: res.Rule}
+	for i, role := range res.Seats {
+		switch role {
+		case tui.SeatHuman:
+			room.Seats[i] = tui.SeatInfo{Name: res.PlayerName, Status: tui.SeatStatusYou}
+		case tui.SeatBotEasy:
+			room.Seats[i] = tui.SeatInfo{Name: "Easy bot", Status: tui.SeatStatusBot}
+		case tui.SeatBotMedium:
+			room.Seats[i] = tui.SeatInfo{Name: "Medium bot", Status: tui.SeatStatusBot}
+		case tui.SeatBotHard:
+			room.Seats[i] = tui.SeatInfo{Name: "Hard bot", Status: tui.SeatStatusBot}
+		}
+		room.Filled++
+	}
+	room.Total = 4
+	return room
+}
+
+// buildHostRoom creates the initial room for hosting (some seats waiting).
+func buildHostRoom(res tui.LobbyResult) *tui.RoomState {
+	room := &tui.RoomState{
+		Rule:     res.Rule,
+		CanStart: true,
+		ShowIPs:  true,
+	}
+	remoteCount := 0
+	for i, role := range res.Seats {
+		switch role {
+		case tui.SeatHuman:
+			room.Seats[i] = tui.SeatInfo{Name: res.PlayerName, Status: tui.SeatStatusYou}
+		case tui.SeatRemote:
+			room.Seats[i] = tui.SeatInfo{Status: tui.SeatStatusWaiting}
+			remoteCount++
+		case tui.SeatBotEasy:
+			room.Seats[i] = tui.SeatInfo{Name: "Easy bot", Status: tui.SeatStatusBot}
+		case tui.SeatBotMedium:
+			room.Seats[i] = tui.SeatInfo{Name: "Medium bot", Status: tui.SeatStatusBot}
+		case tui.SeatBotHard:
+			room.Seats[i] = tui.SeatInfo{Name: "Hard bot", Status: tui.SeatStatusBot}
+		}
+	}
+	room.Total = remoteCount
+	return room
 }
 
 // formatHostBanner builds the "waiting for friends" banner shown in the
