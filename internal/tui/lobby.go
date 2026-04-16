@@ -68,6 +68,7 @@ const (
 	stateNewLocal
 	stateNewHost
 	stateJoin
+	stateJoinManual
 )
 
 // LobbyModel is the Bubble Tea model for the lobby.
@@ -88,6 +89,9 @@ type LobbyModel struct {
 	scanning   bool
 	scanResult []discovery.Found
 	scanErr    error
+
+	// Manual-address join input buffer.
+	manualAddr string
 
 	// Output.
 	Result LobbyResult
@@ -137,6 +141,47 @@ func (m *LobbyModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFormKey(msg)
 	case stateJoin:
 		return m.handleJoinKey(msg)
+	case stateJoinManual:
+		return m.handleManualKey(msg)
+	}
+	return m, nil
+}
+
+// handleManualKey accepts typed characters into m.manualAddr and dials on enter.
+func (m *LobbyModel) handleManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.state = stateMain
+		m.cursor = 0
+		return m, nil
+	case "backspace":
+		if len(m.manualAddr) > 0 {
+			m.manualAddr = m.manualAddr[:len(m.manualAddr)-1]
+		}
+		return m, nil
+	case "enter":
+		if m.manualAddr == "" {
+			return m, nil
+		}
+		addr := m.manualAddr
+		// If the user typed "host" without a port, default 7777.
+		if !strings.Contains(addr, ":") {
+			addr = addr + ":7777"
+		}
+		m.Result = LobbyResult{
+			Mode:   LobbyModeJoin,
+			JoinAt: addr,
+			Rule:   "sichuan",
+		}
+		return m, tea.Quit
+	}
+	// Treat any 1-char printable key as a typed character.
+	s := msg.String()
+	if len(s) == 1 {
+		c := s[0]
+		if c >= 0x20 && c < 0x7f {
+			m.manualAddr += string(c)
+		}
 	}
 	return m, nil
 }
@@ -148,8 +193,9 @@ var mainOptions = []struct {
 	state lobbyState
 }{
 	{"New Local Game (you + 3 bots)", stateNewLocal},
-	{"Host LAN Game", stateNewHost},
-	{"Join LAN Game", stateJoin},
+	{"Host LAN Game (open a room for friends)", stateNewHost},
+	{"Join LAN Game (auto-discover via mDNS)", stateJoin},
+	{"Join by IP address (manual)", stateJoinManual},
 }
 
 func (m *LobbyModel) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -172,7 +218,6 @@ func (m *LobbyModel) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = opt.state
 		m.cursor = 0
 		m.formIdx = 0
-		// Defaults per state.
 		switch m.state {
 		case stateNewLocal:
 			m.seats = [4]SeatRole{SeatHuman, SeatBotEasy, SeatBotEasy, SeatBotEasy}
@@ -181,6 +226,8 @@ func (m *LobbyModel) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case stateJoin:
 			m.scanning = true
 			return m, scanCmd()
+		case stateJoinManual:
+			m.manualAddr = ""
 		}
 	case "q":
 		m.quitting = true
@@ -358,6 +405,8 @@ func (m *LobbyModel) View() string {
 		body = m.viewForm("Host LAN Game")
 	case stateJoin:
 		body = m.viewJoin()
+	case stateJoinManual:
+		body = m.viewJoinManual()
 	}
 
 	footer := chromeStyle.Render("ctrl+c = quit  ·  arrows/hjkl = move  ·  enter = select  ·  esc/b = back")
@@ -470,6 +519,24 @@ func (m *LobbyModel) viewJoin() string {
 		lines = append(lines, "")
 		lines = append(lines, chromeStyle.Render("enter = connect  ·  r = rescan"))
 	}
+	body := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(chromeColor).
+		Padding(1, 4).
+		Render(body)
+}
+
+func (m *LobbyModel) viewJoinManual() string {
+	var lines []string
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Join by IP address"))
+	lines = append(lines, "")
+	lines = append(lines, chromeStyle.Render("Type the host's address (e.g. 192.168.1.5 or 192.168.1.5:7777)."))
+	lines = append(lines, "")
+	cursor := lipgloss.NewStyle().Foreground(turnColor).Render("█")
+	lines = append(lines, "  > "+m.manualAddr+cursor)
+	lines = append(lines, "")
+	lines = append(lines, chromeStyle.Render("enter = connect  ·  esc = back  ·  default port 7777"))
 	body := strings.Join(lines, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

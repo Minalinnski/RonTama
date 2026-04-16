@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -98,6 +99,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 
 	// You ARE playing seat 0 — launch TUI + run server in goroutine.
 	model := tui.NewPlayModel(rule)
+	model.Banner = formatHostBanner(res, 7777)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	players := buildServerSeats(res, prog)
 	obs := tui.NewTUIObserver(prog)
@@ -182,6 +184,35 @@ func playerFromRole(role tui.SeatRole, seat int, prog *tea.Program) game.Player 
 		return hard.New(fmt.Sprintf("H%d", seat))
 	}
 	return nil
+}
+
+// formatHostBanner builds the "waiting for friends" banner shown in the
+// host's TUI before joiners arrive. It includes the listen IPs so the
+// host can read them off to friends ("type 192.168.x.x:7777").
+func formatHostBanner(res tui.LobbyResult, port int) string {
+	addrs := discovery.LocalIPv4Addrs()
+	var b strings.Builder
+	b.WriteString("🀄  HOSTING — waiting for friends to join\n\n")
+	b.WriteString(fmt.Sprintf("Rule:    %s\n", res.Rule))
+	roles := make([]string, 4)
+	for i, r := range res.Seats {
+		roles[i] = fmt.Sprintf("seat%d=%s", i, r.String())
+	}
+	b.WriteString(fmt.Sprintf("Seats:   %s\n", strings.Join(roles, ", ")))
+	b.WriteString(fmt.Sprintf("Wait:    %s before any unfilled remote seats become bots\n\n", res.Wait))
+	b.WriteString("Tell friends:\n")
+	b.WriteString("  1. They run `rontama` → Join LAN Game (mDNS auto-discover), OR\n")
+	if len(addrs) > 0 {
+		b.WriteString("  2. They run `rontama` → Join by IP address → type one of:\n")
+		for _, a := range addrs {
+			b.WriteString(fmt.Sprintf("       %s:%d\n", a, port))
+		}
+	} else {
+		b.WriteString("  2. (no LAN IPs detected — only loopback joining will work)\n")
+	}
+	b.WriteString("\nThis screen will replace itself with the table once everyone is in.\n")
+	b.WriteString("Press q to abort.")
+	return b.String()
 }
 
 // _ = client kept for potential future direct use of the client package

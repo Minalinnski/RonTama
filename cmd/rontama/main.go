@@ -76,23 +76,22 @@ func runTUI() {
 }
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `rontama - terminal mahjong (Sichuan + Riichi)
+	fmt.Fprint(os.Stderr, `rontama — terminal mahjong (Sichuan + Riichi)
 
-Usage:
-  rontama              launch the lobby (新建/开房/加入)
-  rontama lobby        same as above
-  rontama tui          launch the Phase-0 hello placeholder TUI
-  rontama play [-v] [-rounds N]
-                       run an N-round Sichuan match between 4 Easy bots
-  rontama play -tui    interactive 1-round Sichuan: you (seat 0) vs 3 Easy bots
+Just run it:
+  rontama              open the lobby (new local / host LAN / join LAN)
+
+That covers everything the average player needs. The remaining
+subcommands are for scripts, automation, and bot research:
+
+  rontama version                       print build version
+  rontama play [-rule sichuan|riichi] [-rounds N] [-tui]
+                                        launch a game directly (skip the lobby)
+  rontama serve [-port 7777]            host a LAN game directly (skip the lobby)
+  rontama join  [-addr host:port] [-bot]
+                                        join a LAN game directly (skip the lobby)
   rontama botbattle [-rounds N] [-seats easy,medium,hard,hard]
-                       compare bot tiers over N rounds
-  rontama serve [-port 7777] [-timeout 30s]
-                       host a Sichuan game over LAN; empty seats fill with Easy bots
-  rontama join [-addr host:port] [-rule sichuan|riichi] [-bot]
-                       connect to a server (mDNS auto-discover by default).
-                       default: launch interactive TUI for seat 0.
-                       -bot: headless Easy bot (testing / seat-filling)
-  rontama version      print build version
+                                        4-bot stress / strength comparison
+  rontama tui                           hello-world placeholder (legacy)
 `)
 }

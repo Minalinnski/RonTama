@@ -128,6 +128,20 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Found, error) {
 
 func endsWithDot(s string) bool { return len(s) > 0 && s[len(s)-1] == '.' }
 
+// LocalIPv4Addrs returns the IPv4 addresses (excluding loopback) for
+// the host's network interfaces. Useful for telling friends what to
+// `rontama join -addr` against when mDNS doesn't reach them (e.g.
+// across subnets or with mDNS-blocked Wi-Fi).
+func LocalIPv4Addrs() []string {
+	out := []string{}
+	for _, ip := range publishableAddrs() {
+		if !ip.IsLoopback() {
+			out = append(out, ip.String())
+		}
+	}
+	return out
+}
+
 // publishableAddrs returns the IPv4 addresses suitable for mDNS announcement.
 func publishableAddrs() []net.IP {
 	addrs, err := net.InterfaceAddrs()

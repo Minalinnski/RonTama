@@ -58,6 +58,11 @@ type PlayModel struct {
 	roundDone bool
 	finalNote string
 	quitting  bool
+
+	// Banner: optional pre-game info shown while state is nil. The host
+	// uses this to display the listen IP so they can tell friends what
+	// to type into 'rontama join -addr ...'.
+	Banner string
 }
 
 // NewPlayModel constructs a fresh PlayModel.
@@ -259,6 +264,24 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "t":
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 		m.prompt = nil
+	case "r":
+		// Riichi declaration: discard the currently-selected tile
+		// AND set DeclareRiichi=true. The game loop validates eligibility
+		// (concealed, score>=1000, wall>=4, post-discard tenpai) and
+		// rejects with an error if invalid; bots/humans should self-check.
+		if m.selected < 0 || m.selected > maxIdx {
+			break
+		}
+		var discard tile.Tile
+		if m.selected < len(sorted) {
+			discard = sorted[m.selected]
+		} else if drawn != nil {
+			discard = *drawn
+		}
+		m.prompt.Respond <- game.DrawAction{
+			Kind: game.DrawDiscard, Discard: discard, DeclareRiichi: true,
+		}
+		m.prompt = nil
 	case " ", "enter":
 		if m.selected < 0 || m.selected > maxIdx {
 			break
@@ -333,6 +356,13 @@ func countdownTick() tea.Cmd {
 // highlighted in cyan.
 func (m PlayModel) View() string {
 	if m.state == nil {
+		if m.Banner != "" {
+			return lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(headerColor).
+				Padding(1, 3).
+				Render(m.Banner)
+		}
 		return "Loading..."
 	}
 	header := m.renderHeader()
@@ -729,9 +759,14 @@ func (m PlayModel) renderPrompt() string {
 		if m.prompt.View.JustDrew != nil {
 			drewLabel = "drew " + m.prompt.View.JustDrew.String()
 		}
+		// Show the riichi hint only for Riichi rules (not Sichuan).
+		riichiHint := ""
+		if !m.prompt.View.Rule.RequiresDingque() {
+			riichiHint = "  r=立直"
+		}
 		return promptStyle.Render(fmt.Sprintf(
-			"Your turn — %s.  ←/→ or 1-9/a-e select  space/enter discard  t=tsumo  q=quit%s",
-			drewLabel, countdown,
+			"Your turn — %s.  ←/→ or 1-9/a-e select  space=discard  t=tsumo%s  q=quit%s",
+			drewLabel, riichiHint, countdown,
 		))
 	case "call":
 		opts := []string{"n=pass"}
