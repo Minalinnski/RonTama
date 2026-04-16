@@ -19,16 +19,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/Minalinnski/RonTama/internal/ai/easy"
 	"github.com/Minalinnski/RonTama/internal/game"
 	"github.com/Minalinnski/RonTama/internal/net/proto"
 	"github.com/Minalinnski/RonTama/internal/rules"
@@ -133,7 +129,15 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	players := cfg.Players
-	netPlayers := make([]*netPlayer, 0, len(remoteSeats))
+	// Allocate a sessionPlayer for every remote seat up-front. Sessions
+	// tolerate detach/reattach, so disconnection mid-game doesn't kill
+	// the round — the session falls back to tsumogiri.
+	sessions := map[int]*sessionPlayer{}
+	for _, seat := range remoteSeats {
+		sess := newSessionPlayer(seat, cfg.Log)
+		sessions[seat] = sess
+		players[seat] = sess
+	}
 	connected := 0
 
 awaitLoop:
@@ -143,47 +147,97 @@ awaitLoop:
 			seat := remoteSeats[connected]
 			np := newNetPlayer(c, seat, rule, cfg.Log)
 			np.timeout = promptTimeout
-			netPlayers = append(netPlayers, np)
-			players[seat] = np
 			if err := np.sendHello(); err != nil {
 				cfg.Log.Warn("hello send failed", "seat", seat, "err", err)
+				_ = c.Close()
+				continue
 			}
-			// Try to read the immediate Register message to capture the
-			// client's display name. Time-bounded so a misbehaving client
-			// doesn't stall the lobby.
 			np.readRegister()
+			sessions[seat].Attach(np)
 			connected++
 			cfg.Log.Info("client joined", "seat", seat, "name", np.userName, "remote", c.RemoteAddr())
 		case <-deadline:
-			cfg.Log.Info("join timeout — filling remaining remote seats with Easy bots", "filled", connected, "missing", len(remoteSeats)-connected)
+			cfg.Log.Info("join timeout — unconnected remote seats default to tsumogiri bot",
+				"attached", connected, "pending", len(remoteSeats)-connected)
 			break awaitLoop
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	for _, seat := range remoteSeats {
-		if players[seat] == nil {
-			players[seat] = easy.New(fmt.Sprintf("bot-%d", seat))
-		}
-	}
 
-	// Combine multicast observer (for remote clients) + ExtraObserver
-	// (e.g. local TUI host).
-	mc := newMulticastObserver(netPlayers)
+	// Start a reconnection-listener goroutine that drains connCh for the
+	// rest of the round: any new connection whose Register name matches
+	// a currently-detached session re-attaches to that session.
+	reconCtx, reconCancel := context.WithCancel(ctx)
+	defer reconCancel()
+	go reconnectLoop(reconCtx, connCh, sessions, promptTimeout, rule, cfg.Log)
+
+	mc := newMulticastObserver(sessions)
 	var obs game.Observer = mc
 	if cfg.ExtraObserver != nil {
 		obs = chainObservers(mc, cfg.ExtraObserver)
 	}
 
 	res, err := game.RunRoundWithObserver(rule, players, 0, cfg.Log, obs)
+	reconCancel()
 
-	for _, np := range netPlayers {
-		if sendErr := np.send(proto.KindRoundEnd, proto.RoundEnd{Result: res}); sendErr != nil {
-			cfg.Log.Warn("round_end send failed", "seat", np.seat, "err", sendErr)
-		}
-		_ = np.conn.Close()
+	for _, sess := range sessions {
+		sess.Broadcast(proto.KindRoundEnd, proto.RoundEnd{Result: res})
+		sess.Detach(nil)
 	}
 	return err
+}
+
+// reconnectLoop handles connections that arrive after the initial seat
+// allocation. A new client sends Register; if the name matches a
+// detached session, reattach; otherwise reject.
+func reconnectLoop(ctx context.Context, connCh <-chan net.Conn, sessions map[int]*sessionPlayer, timeout time.Duration, rule rules.RuleSet, log *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case c := <-connCh:
+			go handleReconnect(c, sessions, timeout, rule, log)
+		}
+	}
+}
+
+func handleReconnect(c net.Conn, sessions map[int]*sessionPlayer, timeout time.Duration, rule rules.RuleSet, log *slog.Logger) {
+	// Assign a placeholder seat (-1) temporarily; the real seat comes
+	// from whichever session we reattach to.
+	np := newNetPlayer(c, -1, rule, log)
+	np.timeout = timeout
+	// Send a generic Hello with seat=-1; the client will know the real
+	// seat once reattached (it matches on name).
+	if err := np.send(proto.KindHello, proto.Hello{Seat: -1, Rule: rule.Name()}); err != nil {
+		_ = c.Close()
+		return
+	}
+	np.readRegister()
+	if np.userName == "" {
+		log.Warn("reconnect attempt without name; rejecting", "remote", c.RemoteAddr())
+		_ = np.send(proto.KindError, proto.ErrorMsg{Message: "name required for reconnect"})
+		_ = c.Close()
+		return
+	}
+	for seat, sess := range sessions {
+		sess.mu.Lock()
+		alreadyAttached := sess.np != nil
+		nameMatch := sess.displayName == np.userName
+		sess.mu.Unlock()
+		if !alreadyAttached && nameMatch {
+			np.seat = seat
+			// Send a fresh Hello with the correct seat so the client
+			// can lay out the TUI from its real position.
+			_ = np.send(proto.KindHello, proto.Hello{Seat: seat, Rule: rule.Name()})
+			sess.Attach(np)
+			log.Info("client reconnected", "seat", seat, "name", np.userName)
+			return
+		}
+	}
+	log.Warn("reconnect rejected — no matching detached session", "name", np.userName)
+	_ = np.send(proto.KindError, proto.ErrorMsg{Message: "no seat waiting for this name"})
+	_ = c.Close()
 }
 
 // chainObservers composes two observers into one (both fire on every event).
@@ -413,26 +467,20 @@ func fallbackDiscard(view game.PlayerView) game.DrawAction {
 	return game.DrawAction{Kind: game.DrawDiscard}
 }
 
-// multicastObserver pushes StateUpdate messages to every remote player.
+// multicastObserver pushes StateUpdate messages to every session's
+// attached netPlayer. Detached sessions simply no-op.
 type multicastObserver struct {
-	players []*netPlayer
+	sessions map[int]*sessionPlayer
 }
 
-func newMulticastObserver(players []*netPlayer) *multicastObserver {
-	return &multicastObserver{players: players}
+func newMulticastObserver(sessions map[int]*sessionPlayer) *multicastObserver {
+	return &multicastObserver{sessions: sessions}
 }
 
 func (o *multicastObserver) push(s *game.State, note string) {
-	for _, np := range o.players {
-		if np == nil {
-			continue
-		}
-		body := snapshotFor(s, np.seat, note)
-		if err := np.send(proto.KindStateUpdate, body); err != nil {
-			if !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "closed") {
-				np.log.Warn("state_update send failed", "err", err)
-			}
-		}
+	for seat, sess := range o.sessions {
+		body := snapshotFor(s, seat, note)
+		sess.Broadcast(proto.KindStateUpdate, body)
 	}
 }
 
