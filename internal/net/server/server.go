@@ -58,6 +58,22 @@ type Config struct {
 	// fallback default (Pass for call, first concealed tile for
 	// discard, SuitMan for dingque). Default: 30 seconds.
 	PromptTimeout time.Duration
+
+	// JoinChan, when non-nil, receives live updates during the join
+	// phase so the host's TUI can show a real-time lobby with countdown,
+	// seat status, and player names. Closed by Server.Run when the
+	// join phase ends (game starting or timeout).
+	JoinChan chan<- JoinEvent
+}
+
+// JoinEvent describes a join-phase state change pushed to JoinChan.
+type JoinEvent struct {
+	// Seats: per-seat status. "" = waiting, non-empty = joined (value = name).
+	Seats    [game.NumPlayers]string
+	Filled   int           // how many remote seats have been filled
+	Total    int           // total remote seats expected
+	TimeLeft time.Duration // time until unfilled seats become bots
+	Done     bool          // true = join phase over, game starting
 }
 
 // Run starts the server and blocks until the round finishes (or ctx is cancelled).
@@ -122,6 +138,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	startTime := time.Now()
 	var deadline <-chan time.Time
 	if len(remoteSeats) > 0 {
 		deadline = time.After(timeout)
@@ -129,9 +146,6 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	players := cfg.Players
-	// Allocate a sessionPlayer for every remote seat up-front. Sessions
-	// tolerate detach/reattach, so disconnection mid-game doesn't kill
-	// the round — the session falls back to tsumogiri.
 	sessions := map[int]*sessionPlayer{}
 	for _, seat := range remoteSeats {
 		sess := newSessionPlayer(seat, cfg.Log)
@@ -139,6 +153,44 @@ func Run(ctx context.Context, cfg Config) error {
 		players[seat] = sess
 	}
 	connected := 0
+
+	// Helper: push a JoinEvent snapshot to the host TUI (if channel provided).
+	pushJoinEvent := func(done bool) {
+		if cfg.JoinChan == nil {
+			return
+		}
+		var seats [game.NumPlayers]string
+		for i := 0; i < game.NumPlayers; i++ {
+			if p := cfg.Players[i]; p != nil {
+				seats[i] = p.Name()
+			}
+			if sess, ok := sessions[i]; ok {
+				if sess.displayName != "" {
+					seats[i] = sess.displayName
+				} else {
+					seats[i] = "" // still waiting
+				}
+			}
+		}
+		elapsed := time.Since(startTime)
+		left := timeout - elapsed
+		if left < 0 {
+			left = 0
+		}
+		cfg.JoinChan <- JoinEvent{
+			Seats:    seats,
+			Filled:   connected,
+			Total:    len(remoteSeats),
+			TimeLeft: left,
+			Done:     done,
+		}
+	}
+
+	// Tick every second to update the countdown in the host TUI.
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	pushJoinEvent(false)
 
 awaitLoop:
 	for connected < len(remoteSeats) {
@@ -156,13 +208,23 @@ awaitLoop:
 			sessions[seat].Attach(np)
 			connected++
 			cfg.Log.Info("client joined", "seat", seat, "name", np.userName, "remote", c.RemoteAddr())
+			pushJoinEvent(false)
+		case <-ticker.C:
+			pushJoinEvent(false)
 		case <-deadline:
 			cfg.Log.Info("join timeout — unconnected remote seats default to tsumogiri bot",
 				"attached", connected, "pending", len(remoteSeats)-connected)
 			break awaitLoop
 		case <-ctx.Done():
+			if cfg.JoinChan != nil {
+				close(cfg.JoinChan)
+			}
 			return ctx.Err()
 		}
+	}
+	pushJoinEvent(true)
+	if cfg.JoinChan != nil {
+		close(cfg.JoinChan)
 	}
 
 	// Start a reconnection-listener goroutine that drains connCh for the

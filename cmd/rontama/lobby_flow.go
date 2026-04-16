@@ -117,10 +117,25 @@ func runLobbyHost(res tui.LobbyResult) error {
 
 	// You ARE playing seat 0 — launch TUI + run server in goroutine.
 	model := tui.NewPlayModel(rule)
-	model.Banner = formatHostBanner(res, 7777)
+	model.Banner = formatHostBanner(res, 7777) // static fallback
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 	players := buildServerSeatsNamed(res, prog, res.PlayerName)
 	obs := tui.NewTUIObserver(prog)
+
+	// JoinChan pumps live lobby updates (countdown + seat status) into
+	// the TUI during the server's pre-game join phase.
+	joinCh := make(chan server.JoinEvent, 16)
+	go func() {
+		for ev := range joinCh {
+			prog.Send(tui.JoinUpdateMsg{
+				Seats:    ev.Seats,
+				Filled:   ev.Filled,
+				Total:    ev.Total,
+				TimeLeft: ev.TimeLeft,
+				Done:     ev.Done,
+			})
+		}
+	}()
 
 	go func() {
 		cfg := server.Config{
@@ -130,6 +145,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 			Rule:          rule,
 			Players:       players,
 			ExtraObserver: obs,
+			JoinChan:      joinCh,
 		}
 		if err := server.Run(ctx, cfg); err != nil {
 			prog.Send(tui.RoundDoneMsg{Err: err})

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -34,10 +35,15 @@ func (h *HumanPlayer) Name() string {
 	return h.N
 }
 
+// localDeadline returns a soft deadline for local prompts (not
+// enforced — the game won't auto-pass — but the TUI shows the ⏳
+// countdown so the player knows time is passing).
+func localDeadline() time.Time { return time.Now().Add(60 * time.Second) }
+
 // ChooseExchange3 prompts the UI for 3 tiles of one suit.
 func (h *HumanPlayer) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
 	resp := make(chan any, 1)
-	h.Prog.Send(HumanPromptMsg{Kind: "exchange3", View: view, Respond: resp})
+	h.Prog.Send(HumanPromptMsg{Kind: "exchange3", View: view, Respond: resp, Deadline: localDeadline()})
 	v := <-resp
 	picks, ok := v.([3]tile.Tile)
 	if !ok {
@@ -79,7 +85,7 @@ func fallbackExchange3(view game.PlayerView) [3]tile.Tile {
 // ChooseDingque implements game.Player by prompting the UI.
 func (h *HumanPlayer) ChooseDingque(view game.PlayerView) tile.Suit {
 	resp := make(chan any, 1)
-	h.Prog.Send(HumanPromptMsg{Kind: "dingque", View: view, Respond: resp})
+	h.Prog.Send(HumanPromptMsg{Kind: "dingque", View: view, Respond: resp, Deadline: localDeadline()})
 	v := <-resp
 	suit, ok := v.(tile.Suit)
 	if !ok {
@@ -92,7 +98,7 @@ func (h *HumanPlayer) ChooseDingque(view game.PlayerView) tile.Suit {
 // OnDraw implements game.Player by prompting the UI.
 func (h *HumanPlayer) OnDraw(view game.PlayerView) game.DrawAction {
 	resp := make(chan any, 1)
-	h.Prog.Send(HumanPromptMsg{Kind: "draw", View: view, Respond: resp})
+	h.Prog.Send(HumanPromptMsg{Kind: "draw", View: view, Respond: resp, Deadline: localDeadline()})
 	v := <-resp
 	act, ok := v.(game.DrawAction)
 	if !ok {
@@ -111,7 +117,7 @@ func (h *HumanPlayer) OnDraw(view game.PlayerView) game.DrawAction {
 // OnCallOpportunity implements game.Player by prompting the UI.
 func (h *HumanPlayer) OnCallOpportunity(view game.PlayerView, discarded tile.Tile, from int, opps []game.Call) game.Call {
 	resp := make(chan any, 1)
-	h.Prog.Send(HumanPromptMsg{Kind: "call", View: view, Discarded: discarded, Calls: opps, Respond: resp})
+	h.Prog.Send(HumanPromptMsg{Kind: "call", View: view, Discarded: discarded, Calls: opps, Respond: resp, Deadline: localDeadline()})
 	v := <-resp
 	c, ok := v.(game.Call)
 	if !ok {

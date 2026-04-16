@@ -57,6 +57,16 @@ type RoundDoneMsg struct {
 	Err    error
 }
 
+// JoinUpdateMsg is pushed by the host server during the join phase so
+// the banner shows a live lobby with countdown + seat status.
+type JoinUpdateMsg struct {
+	Seats    [4]string     // "" = waiting, non-empty = joined name
+	Filled   int
+	Total    int
+	TimeLeft time.Duration
+	Done     bool
+}
+
 // PlayModel is the interactive play TUI's Bubble Tea model.
 type PlayModel struct {
 	rule      rules.RuleSet
@@ -175,6 +185,10 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.finalNote = formatRoundEnd(msg.Result)
 		}
+		return m, nil
+
+	case JoinUpdateMsg:
+		m.Banner = formatJoinBanner(msg)
 		return m, nil
 	}
 	return m, nil
@@ -1069,6 +1083,33 @@ func appendLog(log []string, line string, max int) []string {
 		log = log[len(log)-max:]
 	}
 	return log
+}
+
+// formatJoinBanner renders the live hosting lobby with countdown + seat status.
+func formatJoinBanner(j JoinUpdateMsg) string {
+	var b strings.Builder
+	b.WriteString("🀄  HOSTING — waiting for players\n\n")
+	for i, name := range j.Seats {
+		status := lipgloss.NewStyle().Foreground(dimColor).Render("⏳ waiting...")
+		if name != "" {
+			status = lipgloss.NewStyle().Foreground(lipgloss.Color("#3FB76C")).Bold(true).Render("✓ " + name)
+		}
+		b.WriteString(fmt.Sprintf("  Seat %d:  %s\n", i, status))
+	}
+	secs := int(j.TimeLeft.Seconds() + 0.5)
+	bar := ""
+	if j.Total > 0 {
+		pct := float64(j.Filled) / float64(j.Total)
+		filled := int(pct * 20)
+		bar = strings.Repeat("█", filled) + strings.Repeat("░", 20-filled)
+	}
+	b.WriteString(fmt.Sprintf("\n  %s  %d/%d joined   ⏳ %ds\n", bar, j.Filled, j.Total, secs))
+	if j.Done {
+		b.WriteString("\n  All seats ready — starting game!")
+	} else {
+		b.WriteString("\n  Empty seats become bots when timer runs out.")
+	}
+	return b.String()
 }
 
 func formatRoundEnd(r *game.RoundResult) string {
