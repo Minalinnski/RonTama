@@ -122,20 +122,22 @@ func runLobbyHost(res tui.LobbyResult) error {
 	players := buildServerSeatsNamed(res, prog, res.PlayerName)
 	obs := tui.NewTUIObserver(prog)
 
-	// JoinChan pumps live lobby updates (countdown + seat status) into
-	// the TUI during the server's pre-game join phase.
+	// JoinChan pumps live lobby updates into the TUI.
 	joinCh := make(chan server.JoinEvent, 16)
 	go func() {
 		for ev := range joinCh {
 			prog.Send(tui.JoinUpdateMsg{
-				Seats:    ev.Seats,
-				Filled:   ev.Filled,
-				Total:    ev.Total,
-				TimeLeft: ev.TimeLeft,
-				Done:     ev.Done,
+				Seats:  ev.Seats,
+				Filled: ev.Filled,
+				Total:  ev.Total,
+				Done:   ev.Done,
 			})
 		}
 	}()
+
+	// StartChan: host presses 's' → TUI sends to this → server begins.
+	startCh := make(chan struct{}, 1)
+	model.StartChan = startCh
 
 	go func() {
 		cfg := server.Config{
@@ -146,6 +148,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 			Players:       players,
 			ExtraObserver: obs,
 			JoinChan:      joinCh,
+			StartChan:     startCh,
 		}
 		if err := server.Run(ctx, cfg); err != nil {
 			prog.Send(tui.RoundDoneMsg{Err: err})

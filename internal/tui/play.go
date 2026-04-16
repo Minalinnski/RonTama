@@ -58,13 +58,12 @@ type RoundDoneMsg struct {
 }
 
 // JoinUpdateMsg is pushed by the host server during the join phase so
-// the banner shows a live lobby with countdown + seat status.
+// the banner shows a live lobby with seat status.
 type JoinUpdateMsg struct {
-	Seats    [4]string     // "" = waiting, non-empty = joined name
-	Filled   int
-	Total    int
-	TimeLeft time.Duration
-	Done     bool
+	Seats  [4]string // "" = waiting, non-empty = joined name
+	Filled int
+	Total  int
+	Done   bool
 }
 
 // PlayModel is the interactive play TUI's Bubble Tea model.
@@ -87,10 +86,13 @@ type PlayModel struct {
 	riichiMode  bool
 	riichiValid []bool // per-tile: true if discarding it leaves tenpai (len = sorted + drawn)
 
-	// Banner: optional pre-game info shown while state is nil. The host
-	// uses this to display the listen IP so they can tell friends what
-	// to type into 'rontama join -addr ...'.
+	// Banner: optional pre-game info shown while state is nil.
 	Banner string
+
+	// StartChan: when non-nil, the host presses 's' and we send to
+	// this channel to tell the server to begin (even if seats aren't full).
+	StartChan chan<- struct{}
+	startSent bool
 }
 
 // NewPlayModel constructs a fresh PlayModel.
@@ -199,10 +201,14 @@ func (m PlayModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	}
-	// 's' cycles the tile display style globally. Works in any state
-	// (main menu / draw / call / round-done) so the player can try
-	// looks without leaving the game.
-	if msg.String() == "s" {
+	// Pre-game lobby: 's' = start game (host tells server to begin).
+	if m.state == nil && m.StartChan != nil && !m.startSent && msg.String() == "s" {
+		m.startSent = true
+		m.StartChan <- struct{}{}
+		return m, nil
+	}
+	// In-game: 's' cycles tile display style.
+	if m.state != nil && msg.String() == "s" {
 		currentTileStyle = currentTileStyle.Next()
 		return m, nil
 	}
@@ -1085,7 +1091,7 @@ func appendLog(log []string, line string, max int) []string {
 	return log
 }
 
-// formatJoinBanner renders the live hosting lobby with countdown + seat status.
+// formatJoinBanner renders the live hosting lobby.
 func formatJoinBanner(j JoinUpdateMsg) string {
 	var b strings.Builder
 	b.WriteString("🀄  HOSTING — waiting for players\n\n")
@@ -1094,20 +1100,21 @@ func formatJoinBanner(j JoinUpdateMsg) string {
 		if name != "" {
 			status = lipgloss.NewStyle().Foreground(lipgloss.Color("#3FB76C")).Bold(true).Render("✓ " + name)
 		}
-		b.WriteString(fmt.Sprintf("  Seat %d:  %s\n", i, status))
+		b.WriteString(fmt.Sprintf("  Seat %d (%s):  %s\n", i, seatLabel(i), status))
 	}
-	secs := int(j.TimeLeft.Seconds() + 0.5)
 	bar := ""
 	if j.Total > 0 {
 		pct := float64(j.Filled) / float64(j.Total)
 		filled := int(pct * 20)
 		bar = strings.Repeat("█", filled) + strings.Repeat("░", 20-filled)
 	}
-	b.WriteString(fmt.Sprintf("\n  %s  %d/%d joined   ⏳ %ds\n", bar, j.Filled, j.Total, secs))
+	b.WriteString(fmt.Sprintf("\n  %s  %d/%d joined\n", bar, j.Filled, j.Total))
 	if j.Done {
-		b.WriteString("\n  All seats ready — starting game!")
+		b.WriteString("\n  Starting game!")
+	} else if j.Filled == j.Total {
+		b.WriteString("\n  All seats filled! Press s to start.")
 	} else {
-		b.WriteString("\n  Empty seats become bots when timer runs out.")
+		b.WriteString("\n  Press s to start (empty seats → bot).  q to cancel.")
 	}
 	return b.String()
 }

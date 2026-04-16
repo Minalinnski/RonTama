@@ -60,20 +60,23 @@ type Config struct {
 	PromptTimeout time.Duration
 
 	// JoinChan, when non-nil, receives live updates during the join
-	// phase so the host's TUI can show a real-time lobby with countdown,
-	// seat status, and player names. Closed by Server.Run when the
-	// join phase ends (game starting or timeout).
+	// phase so the host's TUI can show a real-time lobby with seat
+	// status and player names. Closed by Server.Run when the join
+	// phase ends.
 	JoinChan chan<- JoinEvent
+
+	// StartChan, when non-nil, signals the server to start the game.
+	// The host TUI sends to this channel when the host presses 's'.
+	// If nil, the server uses JoinTimeout (headless/CLI mode).
+	StartChan <-chan struct{}
 }
 
 // JoinEvent describes a join-phase state change pushed to JoinChan.
 type JoinEvent struct {
-	// Seats: per-seat status. "" = waiting, non-empty = joined (value = name).
-	Seats    [game.NumPlayers]string
-	Filled   int           // how many remote seats have been filled
-	Total    int           // total remote seats expected
-	TimeLeft time.Duration // time until unfilled seats become bots
-	Done     bool          // true = join phase over, game starting
+	Seats  [game.NumPlayers]string // "" = waiting, non-empty = joined name
+	Filled int                     // how many remote seats have been filled
+	Total  int                     // total remote seats expected
+	Done   bool                    // game starting
 }
 
 // Run starts the server and blocks until the round finishes (or ctx is cancelled).
@@ -138,9 +141,14 @@ func Run(ctx context.Context, cfg Config) error {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	startTime := time.Now()
 	var deadline <-chan time.Time
-	if len(remoteSeats) > 0 {
+	var startSig <-chan struct{}
+	if cfg.StartChan != nil {
+		// Host TUI mode: wait until host presses start (no timeout).
+		startSig = cfg.StartChan
+		cfg.Log.Info("waiting for joiners (host controls start)", "needed", len(remoteSeats))
+	} else if len(remoteSeats) > 0 {
+		// CLI / headless mode: use JoinTimeout.
 		deadline = time.After(timeout)
 		cfg.Log.Info("waiting for joiners", "timeout", timeout, "needed", len(remoteSeats))
 	}
@@ -154,7 +162,6 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	connected := 0
 
-	// Helper: push a JoinEvent snapshot to the host TUI (if channel provided).
 	pushJoinEvent := func(done bool) {
 		if cfg.JoinChan == nil {
 			return
@@ -168,28 +175,20 @@ func Run(ctx context.Context, cfg Config) error {
 				if sess.displayName != "" {
 					seats[i] = sess.displayName
 				} else {
-					seats[i] = "" // still waiting
+					seats[i] = ""
 				}
 			}
 		}
-		elapsed := time.Since(startTime)
-		left := timeout - elapsed
-		if left < 0 {
-			left = 0
-		}
 		cfg.JoinChan <- JoinEvent{
-			Seats:    seats,
-			Filled:   connected,
-			Total:    len(remoteSeats),
-			TimeLeft: left,
-			Done:     done,
+			Seats:  seats,
+			Filled: connected,
+			Total:  len(remoteSeats),
+			Done:   done,
 		}
 	}
 
-	// Tick every second to update the countdown in the host TUI.
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-
 	pushJoinEvent(false)
 
 awaitLoop:
@@ -209,11 +208,16 @@ awaitLoop:
 			connected++
 			cfg.Log.Info("client joined", "seat", seat, "name", np.userName, "remote", c.RemoteAddr())
 			pushJoinEvent(false)
+			if connected == len(remoteSeats) {
+				break awaitLoop // all seats filled
+			}
 		case <-ticker.C:
 			pushJoinEvent(false)
+		case <-startSig:
+			cfg.Log.Info("host pressed start", "filled", connected, "pending", len(remoteSeats)-connected)
+			break awaitLoop
 		case <-deadline:
-			cfg.Log.Info("join timeout — unconnected remote seats default to tsumogiri bot",
-				"attached", connected, "pending", len(remoteSeats)-connected)
+			cfg.Log.Info("join timeout", "filled", connected)
 			break awaitLoop
 		case <-ctx.Done():
 			if cfg.JoinChan != nil {
