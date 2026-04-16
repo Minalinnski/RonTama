@@ -177,6 +177,69 @@ func renderHandMulti(tiles []tile.Tile, selectedIdxs []int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, hand, keyRow)
 }
 
+// renderHandRiichiSelect is like renderHandSplit but shows tiles in 3
+// visual states: selected (gold border), riichi-valid (pink border),
+// and invalid (dimmed border). Used during the riichi selection sub-mode.
+func renderHandRiichiSelect(sorted []tile.Tile, drawn *tile.Tile, selectedIdx int, valid []bool) string {
+	keys := "123456789abcde"
+	var tileParts, keyParts []string
+	isValid := func(i int) bool { return i < len(valid) && valid[i] }
+	for i, t := range sorted {
+		bc := dimColor // invalid
+		if i == selectedIdx {
+			bc = selectedColor
+		} else if isValid(i) {
+			bc = winColor // pink = valid riichi candidate
+		}
+		tileParts = append(tileParts, renderTileBoxColor(t, bc))
+		ch := byte('?')
+		if i < len(keys) {
+			ch = keys[i]
+		}
+		keyParts = append(keyParts, lipgloss.NewStyle().
+			Foreground(chromeColor).
+			Render(fmt.Sprintf(" %c  ", ch)))
+	}
+	if drawn != nil {
+		tileParts = append(tileParts, lipgloss.NewStyle().Foreground(chromeColor).Render("  "))
+		idx := len(sorted)
+		bc := dimColor
+		if idx == selectedIdx {
+			bc = selectedColor
+		} else if isValid(idx) {
+			bc = winColor
+		}
+		tileParts = append(tileParts, renderTileBoxColor(*drawn, bc))
+		keyParts = append(keyParts, "  ")
+		ch := byte('?')
+		if len(sorted) < len(keys) {
+			ch = keys[len(sorted)]
+		}
+		keyParts = append(keyParts, lipgloss.NewStyle().
+			Foreground(chromeColor).
+			Render(fmt.Sprintf(" %c  ", ch)))
+	}
+	hand := lipgloss.JoinHorizontal(lipgloss.Top, tileParts...)
+	keyRow := lipgloss.JoinHorizontal(lipgloss.Top, keyParts...)
+	return lipgloss.JoinVertical(lipgloss.Left, hand, keyRow)
+}
+
+// renderTileBoxColor renders a tile box with a caller-specified border colour
+// (used by riichi-selection mode for valid/invalid/selected states).
+func renderTileBoxColor(t tile.Tile, bc lipgloss.Color) string {
+	body := tileFaceStyle(t).Render(padToCols(t.String(), 2))
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(bc).
+		Padding(0, 0)
+	if currentTileStyle == TileStyleSolid {
+		style = style.
+			BorderBackground(tileFaceColor).
+			Background(tileFaceColor)
+	}
+	return style.Render(body)
+}
+
 // renderHandSplit renders the concealed hand with the drawn tile
 // segregated on the FAR RIGHT — separated by a small gap, not sorted
 // into the rest. selectedIdx points into the combined slice

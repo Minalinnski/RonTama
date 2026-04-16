@@ -229,22 +229,24 @@ func chiPatterns(discard tile.Tile) [][2]tile.Tile {
 }
 
 // canRonDiscard returns whether `seat` can declare ron on the given discard.
-// Validates against the rule's CanWin including dingque.
+// Validates against the rule's CanWin including dingque, riichi, and
+// all situational flags that affect yaku eligibility (a missing Riichi
+// flag here meant that a riichi-only hand was never offered ron — bug).
 func (s *State) canRonDiscard(seat int, discard tile.Tile, from int) bool {
 	p := s.Players[seat]
-	if p.Hand.Concealed[discard] >= 0 {
-		ctx := rules.WinContext{
-			WinningTile: discard,
-			Tsumo:       false,
-			From:        from,
-			Seat:        seat,
-			Dealer:      s.Dealer,
-			Dingque:     p.Dingque,
-			LastTile:    s.LastTile,
-		}
-		// Try without modifying hand
-		hand := p.Hand
-		return s.Rule.CanWin(hand, discard, ctx)
+	ctx := rules.WinContext{
+		WinningTile: discard,
+		Tsumo:       false,
+		From:        from,
+		Seat:        seat,
+		Dealer:      s.Dealer,
+		Dingque:     p.Dingque,
+		LastTile:    s.LastTile,
+		KanGrab:     s.GrabbableKanTile != nil && *s.GrabbableKanTile == discard,
+		Riichi:      s.Riichi[seat],
+		Ippatsu:     s.IppatsuValid[seat],
+		RoundWind:   tile.East,
 	}
-	return false
+	hand := p.Hand
+	return s.Rule.CanWin(hand, discard, ctx)
 }

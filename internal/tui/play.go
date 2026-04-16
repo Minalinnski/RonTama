@@ -66,6 +66,12 @@ type PlayModel struct {
 	finalNote string
 	quitting  bool
 
+	// Riichi selection mode: user pressed 'r' and is picking which
+	// tile to declare as the riichi-declaration discard. Valid tiles
+	// (whose removal leaves tenpai) render with a special colour.
+	riichiMode  bool
+	riichiValid []bool // per-tile: true if discarding it leaves tenpai (len = sorted + drawn)
+
 	// Banner: optional pre-game info shown while state is nil. The host
 	// uses this to display the listen IP so they can tell friends what
 	// to type into 'rontama join -addr ...'.
@@ -108,8 +114,29 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HumanPromptMsg:
 		p := msg
 		m.prompt = &p
+		m.riichiMode = false
+		m.riichiValid = nil
 		switch msg.Kind {
 		case "draw":
+			// AUTO-TSUMOGIRI AFTER RIICHI: once you've declared riichi
+			// your hand is locked — you must discard the drawn tile every
+			// turn. The only interactive action left is tsumo (if the
+			// drawn tile completes a win).
+			if msg.View.Riichi[msg.View.Seat] {
+				if canTsumoNow(msg.View) {
+					// Show a minimal "tsumo or pass" prompt.
+					m.selected = 0
+					break
+				}
+				// Auto-discard drawn tile; no user interaction needed.
+				if msg.View.JustDrew != nil {
+					msg.Respond <- game.DrawAction{
+						Kind: game.DrawDiscard, Discard: *msg.View.JustDrew,
+					}
+					m.prompt = nil
+					return m, nil
+				}
+			}
 			if msg.View.JustDrew != nil {
 				sorted, _ := splitDrawn(msg.View.OwnHand, msg.View.JustDrew)
 				m.selected = len(sorted) // default-select the drawn tile (rightmost)
@@ -250,10 +277,25 @@ func (m PlayModel) handleDingqueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Post-riichi auto mode: only tsumo is interactive.
+	if m.prompt.View.Riichi[m.prompt.View.Seat] {
+		if msg.String() == "t" && canTsumoNow(m.prompt.View) {
+			m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
+			m.prompt = nil
+		}
+		// All other keys ignored — hand is locked.
+		return m, nil
+	}
+
 	sorted, drawn := splitDrawn(m.prompt.View.OwnHand, m.prompt.View.JustDrew)
 	maxIdx := len(sorted) - 1
 	if drawn != nil {
 		maxIdx++
+	}
+
+	// In riichi-selection mode only navigation + confirm + cancel work.
+	if m.riichiMode {
+		return m.handleRiichiSelectKey(msg, sorted, drawn, maxIdx)
 	}
 
 	s := msg.String()
@@ -282,34 +324,34 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected++
 		}
 	case "t":
-		// Only let the player tsumo when the rule actually accepts it
-		// (e.g. Riichi requires a yaku). Silently swallow otherwise.
 		if !canTsumoNow(m.prompt.View) {
 			return m, nil
 		}
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 		m.prompt = nil
 	case "r":
-		// Riichi declaration: discard the currently-selected tile AND
-		// set DeclareRiichi=true. Gated client-side on canRiichiNow —
-		// if the selected tile doesn't leave the hand tenpai (or any
-		// other precondition fails), the key is silently ignored.
-		if m.selected < 0 || m.selected > maxIdx {
-			break
+		// Enter riichi selection mode: compute which tiles are valid
+		// riichi discards (lead to tenpai), highlight them.
+		valid := computeRiichiValid(m.prompt.View, sorted, drawn)
+		anyValid := false
+		for _, v := range valid {
+			if v {
+				anyValid = true
+				break
+			}
 		}
-		var discard tile.Tile
-		if m.selected < len(sorted) {
-			discard = sorted[m.selected]
-		} else if drawn != nil {
-			discard = *drawn
+		if !anyValid {
+			return m, nil // can't riichi at all
 		}
-		if !canRiichiNow(m.prompt.View, discard) {
-			return m, nil
+		m.riichiMode = true
+		m.riichiValid = valid
+		// Move cursor to first valid tile.
+		for i, v := range valid {
+			if v {
+				m.selected = i
+				break
+			}
 		}
-		m.prompt.Respond <- game.DrawAction{
-			Kind: game.DrawDiscard, Discard: discard, DeclareRiichi: true,
-		}
-		m.prompt = nil
 	case " ", "enter":
 		if m.selected < 0 || m.selected > maxIdx {
 			break
@@ -324,6 +366,71 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt = nil
 	}
 	return m, nil
+}
+
+// handleRiichiSelectKey handles navigation within riichi selection mode.
+// Only valid tiles can be selected. space/enter confirms, esc/r cancels.
+func (m PlayModel) handleRiichiSelectKey(msg tea.KeyMsg, sorted []tile.Tile, drawn *tile.Tile, maxIdx int) (tea.Model, tea.Cmd) {
+	s := msg.String()
+	switch s {
+	case "esc", "r":
+		m.riichiMode = false
+		m.riichiValid = nil
+		return m, nil
+	case "left", "h":
+		// Move to prev valid tile.
+		for i := m.selected - 1; i >= 0; i-- {
+			if i < len(m.riichiValid) && m.riichiValid[i] {
+				m.selected = i
+				break
+			}
+		}
+	case "right", "l":
+		for i := m.selected + 1; i <= maxIdx; i++ {
+			if i < len(m.riichiValid) && m.riichiValid[i] {
+				m.selected = i
+				break
+			}
+		}
+	case " ", "enter":
+		if m.selected < 0 || m.selected >= len(m.riichiValid) || !m.riichiValid[m.selected] {
+			return m, nil
+		}
+		var discard tile.Tile
+		if m.selected < len(sorted) {
+			discard = sorted[m.selected]
+		} else if drawn != nil {
+			discard = *drawn
+		}
+		m.prompt.Respond <- game.DrawAction{
+			Kind: game.DrawDiscard, Discard: discard, DeclareRiichi: true,
+		}
+		m.prompt = nil
+		m.riichiMode = false
+		m.riichiValid = nil
+	}
+	return m, nil
+}
+
+// computeRiichiValid returns a per-index boolean: true means discarding
+// that tile leaves the hand at tenpai AND all other riichi preconditions
+// (concealed, score, wall, not already riichi) are met.
+//
+// Indices 0..len(sorted)-1 map to the sorted hand; index len(sorted) is
+// the drawn tile (if present).
+func computeRiichiValid(view game.PlayerView, sorted []tile.Tile, drawn *tile.Tile) []bool {
+	n := len(sorted)
+	if drawn != nil {
+		n++
+	}
+	out := make([]bool, n)
+	for i := 0; i < len(sorted); i++ {
+		out[i] = canRiichiNow(view, sorted[i])
+	}
+	if drawn != nil {
+		out[len(sorted)] = canRiichiNow(view, *drawn)
+	}
+	return out
 }
 
 func (m PlayModel) handleCallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -682,9 +789,9 @@ func (m PlayModel) renderSelfPanel(width int) string {
 // below the table. The just-drawn tile is shown on the FAR RIGHT,
 // separated by a gap, and never auto-sorted into the rest.
 //
-// Exchange-three mode: hand is rendered with multi-select highlighting
-// of m.exchSet entries; the drawn-tile slot is suppressed (no draws
-// happen during the exchange phase).
+// In riichi-selection mode, tiles whose discard leads to tenpai are
+// rendered with a distinctive border colour (winColor / pink) so the
+// player can quickly see which ones are valid riichi declarations.
 func (m PlayModel) renderHandRow() string {
 	st := m.state
 	p := st.Players[HumanSeat]
@@ -700,7 +807,12 @@ func (m PlayModel) renderHandRow() string {
 	if m.prompt != nil && m.prompt.Kind == "draw" {
 		sel = m.selected
 	}
-	hand := renderHandSplit(sorted, drawn, sel)
+	var hand string
+	if m.riichiMode && m.riichiValid != nil {
+		hand = renderHandRiichiSelect(sorted, drawn, sel, m.riichiValid)
+	} else {
+		hand = renderHandSplit(sorted, drawn, sel)
+	}
 	return lipgloss.PlaceHorizontal(m.maxWidth(), lipgloss.Center, hand)
 }
 
@@ -866,6 +978,17 @@ func (m PlayModel) renderPrompt() string {
 	case "dingque":
 		return promptStyle.Render("Choose 缺 suit:  m=萬  p=筒  s=索" + countdown)
 	case "draw":
+		// Post-riichi: only tsumo is interactive.
+		if m.prompt.View.Riichi[m.prompt.View.Seat] {
+			if canTsumoNow(m.prompt.View) {
+				return promptStyle.Render("立直中 — t=自摸  (auto-tsumogiri if you pass)" + countdown)
+			}
+			return promptStyle.Render("立直中 — 自動摸切…" + countdown)
+		}
+		// Riichi selection sub-mode.
+		if m.riichiMode {
+			return promptStyle.Render("立直 — pick a tile to declare (pink = valid)  space=confirm  esc=cancel" + countdown)
+		}
 		drewLabel := "no draw (post-call discard)"
 		if m.prompt.View.JustDrew != nil {
 			drewLabel = "drew " + m.prompt.View.JustDrew.String()
@@ -874,26 +997,17 @@ func (m PlayModel) renderPrompt() string {
 		if canTsumoNow(m.prompt.View) {
 			tsumoHint = "  t=自摸"
 		}
-		// Riichi hint tracks the currently-selected tile: only shown
-		// when discarding THAT tile would produce a valid riichi
-		// declaration (concealed + tenpai after discard + wall/score
-		// preconditions). Navigation with ←/→ makes the hint
-		// appear/disappear, so the player can visually find a tile
-		// that lets them declare.
+		// Show r=立直 when ANY tile qualifies (entering riichi select
+		// mode will highlight exactly which ones).
 		riichiHint := ""
-		if !m.prompt.View.Rule.RequiresDingque() {
+		if !m.prompt.View.Rule.RequiresDingque() && !m.prompt.View.Riichi[m.prompt.View.Seat] {
 			sorted, drawn := splitDrawn(m.prompt.View.OwnHand, m.prompt.View.JustDrew)
-			var sel tile.Tile
-			ok := false
-			if m.selected >= 0 && m.selected < len(sorted) {
-				sel = sorted[m.selected]
-				ok = true
-			} else if drawn != nil && m.selected == len(sorted) {
-				sel = *drawn
-				ok = true
-			}
-			if ok && canRiichiNow(m.prompt.View, sel) {
-				riichiHint = "  r=立直"
+			valid := computeRiichiValid(m.prompt.View, sorted, drawn)
+			for _, v := range valid {
+				if v {
+					riichiHint = "  r=立直"
+					break
+				}
 			}
 		}
 		return promptStyle.Render(fmt.Sprintf(
