@@ -2,214 +2,202 @@
 
 > 慢慢看版。第一次开房 + 拉朋友进来的全流程。
 
-## Step 0 — 你已经准备好了
+## 推荐架构：独立服务器 + 4 个客户端
 
-- 仓库已 push 到 <https://github.com/Minalinnski/RonTama>（CI 跑在 <https://github.com/Minalinnski/RonTama/actions>）
-- 你机器上已经有 `./rontama` 二进制（直接跑就行）
-- 你的局域网 IP 用这条命令拿：
+**从 v0.2 开始，推荐你开一个独立 `rontama serve` 终端做服务器，然后自己也另开一个 terminal 当客户端加入。** 这样你关自己 TUI 只是"断线"，服务器还在跑，bot 接管你的座位，你重开 TUI 输同一个名字就能续上。
+
+旧的"Host LAN Game + You play seat 0"（在一个进程里既是服务器又是玩家）还留着，但你退就整个房间死。**不建议主局用。**
+
+---
+
+## Step 0 — 现状
+
+- 仓库：<https://github.com/Minalinnski/RonTama>
+- 你的局域网 IP：
   ```bash
   ipconfig getifaddr en0
   # 例：192.168.2.160
   ```
-  换 WiFi 后这个值会变，得重新拿。
+  换 WiFi 会变。
 
 ---
 
 ## Step 1 — 把二进制发给朋友
 
-我已经给三个平台 cross-compile 好了，全在 `dist/` 下：
+Cross-compile 好的文件在 `dist/` 下（如果没了，运行 `make-binaries.sh` 或手动 `GOOS=darwin GOARCH=arm64 go build -o dist/rontama-mac-arm64 ./cmd/rontama`）：
 
 | 文件 | 给谁 |
 |---|---|
-| `dist/rontama-mac-arm64` (~8 MB) | Apple Silicon Mac (M1/M2/M3/M4) |
-| `dist/rontama-mac-intel` (~8.5 MB) | Intel Mac |
-| `dist/rontama-linux`   (~8 MB) | Linux x86_64 |
+| `dist/rontama-mac-arm64` | Apple Silicon Mac (M1/M2/M3/M4) |
+| `dist/rontama-mac-intel` | Intel Mac |
+| `dist/rontama-linux` | Linux x86_64 |
 
-**怎么发**：AirDrop 最快；也可以微信/iMessage 发文件、scp、Dropbox 等。
+**发**：AirDrop / iMessage / 微信 / Dropbox / scp 都行。
 
-**朋友怎么判断自己的 Mac 是什么**：
-左上角 → 关于本机 → 芯片栏。
-- 写 "Apple M..." → arm64
-- 写 "Intel" → intel
-
-### 朋友收到后（macOS 一次性设置）
-
+**朋友收到后（macOS 一次性）**：
 ```bash
-# 假设文件在 ~/Downloads/rontama-mac-arm64
 chmod +x ~/Downloads/rontama-mac-arm64
 xattr -d com.apple.quarantine ~/Downloads/rontama-mac-arm64
-
-# 可选：放进 PATH，以后哪都能跑
 mv ~/Downloads/rontama-mac-arm64 /usr/local/bin/rontama
-
-# 验证
 rontama version
-# → rontama dev (none, built unknown)
 ```
 
-第二条 `xattr` 是为了绕开 macOS Gatekeeper（未签名二进制第一次会被拦"无法验证开发者"）。这是一次性的。
-
-如果朋友不想搬到 `/usr/local/bin`，直接在 Downloads 里 `./rontama-mac-arm64` 跑也行。
-
-### 替代方案：朋友自己装 Go
-
-如果朋友是技术宅且装了 [Go 1.26+](https://go.dev/dl/)，一行：
-
-```bash
-go install github.com/Minalinnski/RonTama/cmd/rontama@latest
-```
-
-不用你传文件。但要求他装 Go runtime。
+第二条是为了绕 macOS Gatekeeper。一次搞定。
 
 ---
 
-## Step 2 — 你开房
+## Step 2 — 你开房（推荐：纯服务器模式）
+
+### Terminal A（服务器）
 
 ```bash
-cd /Users/williamgu/Documents/Github/personal/RonTama
-./rontama
+rontama
 ```
+进 lobby：
+1. ↓ 选 **Host LAN Game**
+2. 字段配置：
+   - **Rule**: `sichuan` 或 `riichi`
+   - **Server only**: **选 Yes**（左/右键切）→ seat 0 也标成 Remote
+   - **Seat 1/2/3**: 同理，都选 Remote（等 3 个朋友）或混 bot
+   - **Wait**: 60s 左右（给朋友进入的时间）
+3. `[ Start ]` → 进入"等待界面"，会显示：
+   ```
+   🀄  HOSTING — waiting for friends to join
+   
+   Rule:    riichi
+   Seats:   seat0=Remote, seat1=Remote, seat2=Remote, seat3=Remote
+   
+   Tell friends:
+     192.168.2.160:7777
+   ```
 
-进 Lobby 后：
+**这个 terminal 不要关**。关了服务器死、所有人被踢。
 
-1. ↓ 选 **Host LAN Game (open a room for friends)** → enter
-2. 进入配置表单，用方向键 / hjkl 移动焦点：
-   - **Rule**: ←/→ 切 `sichuan` 或 `riichi`
-   - **Seat 1 / 2 / 3**: ←/→ 切：
-     - `Remote` — 等朋友远程加入
-     - `Easy bot` / `Medium bot` / `Hard bot` — 本地 bot 占位（朋友不够人时凑数）
-   - **Wait**: ←/→ 调 `5s` ~ `600s`，超时后空 `Remote` 座位会被 Easy bot 自动顶上（保证游戏一定能开始）
-3. ↓ 移到 `[ Start ]` → enter
+### Terminal B（你作为客户端加入）
 
-进入"等待界面"，看到类似：
-
+再开一个 terminal：
+```bash
+rontama
 ```
-🀄  HOSTING — waiting for friends to join
+进 lobby：
+1. 先去 `Edit your name` 改名字（默认 $USER，想改就改）
+2. ↓ 选 **Join by IP address**
+3. 输入 `127.0.0.1:7777`（本机）或 `192.168.2.160:7777` 都行
+4. enter → 连服务器 → 进牌桌
 
-Rule:    sichuan
-Seats:   seat0=You, seat1=Remote, seat2=Remote, seat3=Remote
-Wait:    30s before any unfilled remote seats become bots
-
-Tell friends:
-  1. They run `rontama` → Join LAN Game (mDNS auto-discover), OR
-  2. They run `rontama` → Join by IP address → type one of:
-       192.168.2.160:7777
-```
-
-**把 `192.168.2.160:7777` 念给朋友** 或者发微信。
+**你现在是 seat 0（第一个加进来的），朋友 2-4 个人会补上 seat 1-3。**
 
 ---
 
 ## Step 3 — 朋友加入
 
-朋友在他自己电脑上：
+每个朋友在他自己电脑上：
 ```bash
 rontama
 ```
+进 lobby：
+1. `Edit your name` → 输自己名字
+2. 选 `Join LAN Game`（mDNS 自动）或 `Join by IP address` 手输 `192.168.2.160:7777`
+3. enter → 连上，占剩下的 seat
 
-进 Lobby：
-
-### 同一个 WiFi 场景（mDNS 通常能用）
-
-选 **Join LAN Game (auto-discover via mDNS)** → 等几秒 → 列表里出现你的服务器 → ↓ 选 → enter。
-
-### mDNS 不通的场景
-
-公司 WiFi 拦广播、不同子网、有些路由器禁了 mDNS — 这时候 "Join LAN Game" 会显示 "no servers found"。
-
-让朋友选 **Join by IP address (manual)**：
-- 输入你给的地址，比如 `192.168.2.160:7777`
-- 也可以只输 `192.168.2.160`，默认端口 7777
-- enter 连接
-
-朋友连上后，你的"等待界面"自动消失 → 4 个 panel 摆好 → 开打。
+4 个人全上了，服务器 terminal 开始分牌，所有客户端进入牌桌。
 
 ---
 
-## Step 4 — 真在打牌时怎么操作
+## Step 4 — 断线怎么办（新）
 
-桌面是 3×3 panel 网格，**你永远在底部** YOU 那个 panel。当前轮到打牌的玩家，他的 panel 边框会变青色 + 名字前出现 `●`。立直过的玩家名字后面会跟个 `立`。
+### 朋友 A 打到一半 Ctrl+C 退了
 
-### 你的回合（panel 边框变青时）
+- 服务器检测到 A 断开
+- A 的 seat 切成 **摸切 bot**（只把摸的牌打掉，不鸣不胡）
+- 其他人的 TUI 里 A 的名字后面加 `(掉线)` 标记
+- 游戏继续
 
-| 操作 | 按键 |
-|---|---|
-| 选牌（手牌横向，**摸的牌固定在最右**，不会被自动理进去） | `←/→` 或 `1-9 / a-e` |
-| 打出选中的牌 | `space` 或 `enter` |
-| 自摸 | `t` |
-| 立直（Riichi 听牌时） | `r` |
+### 朋友 A 想回来
 
-`r` 在自己回合里 = 立直宣告（把选中的那张作为立直牌打出去）。条件：手牌门清 + 分数≥1000 + 牌山剩≥4 张 + 打这张后是听牌。不满足会直接拒绝（loop 校验）。
+- A 重新跑 `rontama` → 输**同一个名字** → `Join by IP address` → 同一个服务器
+- 服务器看到名字匹配到 A 的掉线座位 → 把 A 重新接回来
+- A 从现在这步开始恢复正常打
 
-### 别人打牌后跳出的 Call 提示
+### 你（房主）自己断了
 
-| 操作 | 按键 |
-|---|---|
-| Ron / 胡 | `r` |
-| Kan / 杠 | `k` |
-| Pon / 碰 | `p` |
-| Chi / 吃（仅 Riichi、仅下家） | `c` |
-| Pass / 过 | `n` |
+- 你在 Terminal B 的 TUI 关了/Ctrl+C
+- Terminal A 的服务器**不受影响**
+- 你重开 `rontama` → 同名 → Join → 回到同一个座位
 
-优先级：**Ron > Kan > Pon > Chi**。同一玩家如果同时能 Ron 和 Pon，按 `r` 取 Ron，按 `p` 取 Pon。
+### 服务器 terminal 挂了
 
-`r` 在 Call 上下文 = Ron；在自己回合 = 立直。同一个键，根据上下文不同含义。
-
-### 川麻特殊
-
-| 操作 | 按键 |
-|---|---|
-| 换三张选 3 张同色 | `1-9` toggle 选 / 取消，`space` 提交 |
-| 选缺一门 | `m` 萬 / `p` 筒 / `s` 索 |
-
-（川麻没有吃。开局有"换三张 → 定缺"两步。）
-
-### 退出
-
-`q` / `esc` / `Ctrl+C` — 任何时候都行。
+那就整个房间死。重开得从头来。**所以不要关 Terminal A。**
 
 ---
 
-## Step 5 — 翻车手册
+## Step 5 — 多局对战（新）
+
+- **川麻**：默认 1 局就结算（血战到底本来就是单局制）
+- **日麻**：默认 **4 局东风战 (東風戦)**，带连庄（庄家赢继续庄，非庄家赢下家做庄）
+
+所有 4 局打完才算一个 match 结束，最终积分定胜负。Riichi 起始分每人 25000，最后看谁高。
+
+---
+
+## 操作（TUI 内）
+
+| 按键 | 行为 |
+|---|---|
+| `←/→` 或 `h/l` | 选择手牌 |
+| `1-9 / a-e` | 数字/字母直接跳到对应位置的牌 |
+| `space / enter` | 打出选中的牌 |
+| `t` | 自摸（只在真能胡的时候出现 `t=自摸` 提示） |
+| `r` | (日麻) 立直（听牌时把选中的牌作为立直宣告牌打出） |
+| `m / p / s` | (川麻) 选缺：萬 / 筒 / 索 |
+| `1-9/a-e` toggle | (川麻) 换三张时多选 3 张同色 |
+| `r / k / p / c / n` | 鸣牌：Ron / Kan / Pon / Chi / Pass |
+| `q / esc / Ctrl+C` | 退出（=掉线，可重连） |
+
+当前轮到打牌的玩家：panel 边框变青色 + 名字前 `●`。立直过：名字后 `立`。掉线：名字后 `(掉线)`。
+
+---
+
+## Step 6 — 翻车手册
 
 | 问题 | 怎么办 |
 |---|---|
-| 朋友 `Join LAN Game` 看不到你的服务器 | mDNS 被网络拦了。让朋友走 `Join by IP address` 手输你的 IP |
-| 朋友提示 `no servers found via mDNS` | 同上 |
-| 朋友连了但桌面错位 / `YOU` 标在错位置 | 已知小限制：当前 TUI 假定客户端是 seat 0；多人客户端只有第一个加入的人 TUI 完全正确。第二个起加入的可以临时用 `rontama join -addr ... -bot` 走 headless bot 模式回避 |
-| 你（房主）的 IP 变了 | 重连 WiFi、路由器分配新 IP 都会导致。重跑 `rontama` 重新看 banner 上的 IP |
-| 朋友 Mac 跑 `./rontama-mac-arm64` 报 "killed" 或 "无法打开" | macOS Gatekeeper。回 Step 1 看 `xattr -d com.apple.quarantine ...` 命令 |
-| 朋友跨了 WiFi（他用手机热点你用家里路由器） | 局域网根本不通，无解。要么所有人连同一个 WiFi，要么所有人装 [Tailscale](https://tailscale.com/)（免费、5 分钟搭好），把所有人放到同一个 overlay 网络，然后 join 时用 Tailscale 给你的 100.x.x.x 地址 |
-| 大家都看到 "no wins (wall exhaustion)" | 牌墙抓完没人胡。Riichi 的 bot 因为不会鸣牌 + 不积极攻击，确实容易流局；川麻爆发率高很多 |
-| 房主关了 / 网络断了 | 客户端会收到 EOF 或 RoundEnd 错误，TUI 显示 ERROR + press q to quit。重开一局 |
+| 朋友 `Join LAN Game` 看不到服务器 | mDNS 被拦。用 `Join by IP address` 手输 `192.168.2.160:7777` |
+| 朋友的 Mac 跑报 "killed" / "无法打开" | Gatekeeper。回 Step 1 看 `xattr` 命令 |
+| 你家 IP 变了（换了 WiFi） | 重启服务器 terminal，banner 上会显示新 IP，重新发给朋友 |
+| 朋友跨了 WiFi（你家 WiFi vs 他手机热点） | 局域网不通。要么同 WiFi，要么 [Tailscale](https://tailscale.com/) 给你和朋友分配 100.x.x.x，然后 Join 用那个 |
+| 有人"消失"了一整局，bot 一直在摸切 | 名字没对上，重连匹配不到。让他确认 lobby 里 `Edit your name` 填的跟之前 Register 的完全一样 |
+| 发现同名两个人 | 第一个先连上的先认；第二个被拒 `no seat waiting for this name`。让其中一个改名 |
+| 服务器 terminal 被 Ctrl+C | 整桌结束。没有 session 持久化，重开要重新来 |
 
 ---
 
-## TL;DR — 现在就能做的 3 行
+## TL;DR — 3 个 terminal
 
 ```bash
-# 1. AirDrop dist/rontama-mac-arm64 给朋友（或对应平台）
+# Terminal 1 — 服务器（整局期间不要关）
+rontama
+# → Host LAN Game → Server only: Yes → Start → 念 banner 里的 IP
 
-# 2. 朋友本地:
-chmod +x rontama-mac-arm64
-xattr -d com.apple.quarantine rontama-mac-arm64
-./rontama-mac-arm64
+# Terminal 2 — 你作为玩家
+rontama
+# → Edit your name → Join by IP address → 127.0.0.1:7777
 
-# 3. 你本地（仓库目录里）:
-./rontama
-# Lobby → Host LAN Game → 留 3 个 Remote → Start
-# → 念出 banner 里的 192.168.x.x:7777 给朋友
+# Terminal 3+ — 朋友（他们自己开）
+rontama
+# → Edit your name → Join LAN Game 或 Join by IP
 ```
 
-朋友在 lobby 里 `Join LAN Game` 自动找，找不到就 `Join by IP address` 手输。开打。
+全员进来后，服务器自动开打。中途任何人退 = 掉线，bot 顶；同名 Join 回来 = 恢复。
 
 ---
 
-## 后续可改进的地方（如果朋友提需求）
+## 局限（目前还没做的）
 
-- **多人 TUI 客户端**：现在第二个加入的人 TUI 显示假定他在 seat 0，会错位。`tui.HumanSeat` 改成 PlayModel 字段就修了。
-- **跨网 / 公网**：内置中继可以加（WebRTC / TURN）。短期 workaround 用 Tailscale。
-- **房间持续到打多个东风局 / 半庄**：当前一次开房只打 1 局，结束后程序退。改成 N 局 / 直到所有人 -25000 分需要 lobby + game loop 联动。
-- **Web 客户端**：Bubble Tea + 一个浏览器渲染壳就能搞，不大，但需要新协议层。
+- **跨 WiFi / 公网**: 只支持同 LAN。用 Tailscale 绕。
+- **房间持久化**: 服务器 terminal 一关就全没。短期内会加 `save-session` / `resume` 让服务器重启也能续局。
+- **昵称唯一性**: 同名冲突直接拒第二个。将来可能加 token-based 会话。
+- **断线重连时的 in-flight 状态同步**: 重连后会收到下一次 StateUpdate，但如果正好在某个 Ask 中间断的，那一瞬间的动作已经被 tsumogiri 处理了。影响不大但会察觉。
+- **日麻**: dead wall 暂时没切，dora indicator 由 server 内部管理。honba 计数了但奖金加成还没接到结算上。
 
-这些都不是 MVP 必要，看朋友怎么用再说。
+全都在 `CLAUDE.md` 里有记录。
