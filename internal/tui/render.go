@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/Minalinnski/RonTama/internal/tile"
 )
@@ -56,11 +57,17 @@ func renderTileCompact(t tile.Tile) string {
 //             │1m│    ← ivory face, red/blue/green ink
 //             ╰──╯
 //
+// Body is always exactly 2 terminal columns — "1m" is 2 ASCII cols,
+// "東" is 1 rune × 2 CJK cols. Using %-2s pads by RUNE count, which
+// adds an extra space after single-rune CJK (東 → "東 ") and makes
+// wind/dragon tiles a column wider than suit tiles. We pad using
+// runewidth.StringWidth instead, which measures visual columns.
+//
 // Selected state switches the border colour to gold instead of
 // re-styling the multi-line body (which breaks JoinHorizontal alignment
 // in Lipgloss).
 func renderTileBox(t tile.Tile, selected bool) string {
-	body := tileFaceStyle(t).Render(fmt.Sprintf("%-2s", t.String()))
+	body := tileFaceStyle(t).Render(padToCols(t.String(), 2))
 	bc := chromeColor
 	if selected {
 		bc = selectedColor
@@ -70,6 +77,17 @@ func renderTileBox(t tile.Tile, selected bool) string {
 		BorderForeground(bc).
 		Padding(0, 0).
 		Render(body)
+}
+
+// padToCols right-pads s with spaces so its visual terminal width is
+// exactly `cols`. Measures visual width with go-runewidth (CJK chars
+// count as 2 columns each).
+func padToCols(s string, cols int) string {
+	w := runewidth.StringWidth(s)
+	if w >= cols {
+		return s
+	}
+	return s + strings.Repeat(" ", cols-w)
 }
 
 // renderHandConcealed renders the concealed hand horizontally with tile

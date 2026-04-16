@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/Minalinnski/RonTama/internal/game"
 	"github.com/Minalinnski/RonTama/internal/rules/sichuan"
 	"github.com/Minalinnski/RonTama/internal/tile"
@@ -44,6 +46,40 @@ func TestSnapshot_FullView(t *testing.T) {
 
 	out := m.View()
 	t.Logf("\n%s", out)
+
+	// Verify CJK honors stay 4-col tile boxes like the ASCII suit tiles.
+	tiles := []tile.Tile{tile.Man1, tile.Pin5, tile.Sou9, tile.East, tile.South, tile.Red, tile.White, tile.Green}
+	for _, tl := range tiles {
+		box := renderTileBox(tl, false)
+		// Each rendered box should have the same per-line visual width.
+		lines := strings.Split(box, "\n")
+		if len(lines) < 3 {
+			t.Fatalf("tile box for %s has <3 lines: %q", tl, box)
+		}
+		w0 := lipgloss.Width(lines[0])
+		w1 := lipgloss.Width(lines[1])
+		w2 := lipgloss.Width(lines[2])
+		if w0 != w1 || w1 != w2 {
+			t.Errorf("tile %s box lines differ in width: %d / %d / %d", tl, w0, w1, w2)
+		}
+	}
+	// All tile boxes (ASCII + CJK) should be the same width.
+	widths := map[tile.Tile]int{}
+	for _, tl := range tiles {
+		box := renderTileBox(tl, false)
+		lines := strings.Split(box, "\n")
+		widths[tl] = lipgloss.Width(lines[1])
+	}
+	var want int
+	for tl, w := range widths {
+		if want == 0 {
+			want = w
+			continue
+		}
+		if w != want {
+			t.Errorf("tile %s width %d differs from %d (other tiles)", tl, w, want)
+		}
+	}
 
 	for _, want := range []string{"Dealer", "Wall:", "YOU (East)", "缺", "drew 5p"} {
 		if !strings.Contains(out, want) {
