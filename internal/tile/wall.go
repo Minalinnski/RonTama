@@ -46,6 +46,40 @@ func (w *Wall) Draw() (Tile, bool) {
 	return t, true
 }
 
+// SplitDeadWall removes `n` tiles from the END of the wall and
+// returns them. The wall's drawable range shrinks accordingly.
+//
+// In Riichi mahjong the dead wall is always 14 tiles (7 pairs). The
+// first pair's upper tile is the initial dora indicator; the rest
+// are used for kan-replacement draws and additional dora flips.
+//
+// Must be called AFTER NewWall and BEFORE any Draw calls (Drawn == 0).
+// Panics if the wall is too small or draws have already started.
+func (w *Wall) SplitDeadWall(n int) []Tile {
+	if w.Drawn != 0 {
+		panic("SplitDeadWall: draws already started")
+	}
+	if n > len(w.Tiles) {
+		panic(fmt.Sprintf("SplitDeadWall: n=%d > wall size %d", n, len(w.Tiles)))
+	}
+	split := len(w.Tiles) - n
+	dead := make([]Tile, n)
+	copy(dead, w.Tiles[split:])
+	w.Tiles = w.Tiles[:split]
+	return dead
+}
+
+// DrawFromBack pops one tile from the END of the wall. Used for
+// kan-replacement draws (嶺上牌). Returns false if the wall is empty.
+func (w *Wall) DrawFromBack() (Tile, bool) {
+	if w.Drawn >= len(w.Tiles) {
+		return 0, false
+	}
+	t := w.Tiles[len(w.Tiles)-1]
+	w.Tiles = w.Tiles[:len(w.Tiles)-1]
+	return t, true
+}
+
 // DrawN pops up to n tiles. Returns the slice (may be shorter if the
 // wall ran out).
 func (w *Wall) DrawN(n int) []Tile {
