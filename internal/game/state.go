@@ -147,11 +147,13 @@ func (s *State) View(seat int) PlayerView {
 // AvailableCallsOnDiscard enumerates the calls each non-discarding seat
 // could legally make against the given discard.
 //
-// Order matters for resolution: Ron > Kan > Pon, and Ron from a closer
-// seat in the discard's wake takes priority over a farther one. The
-// caller is responsible for resolving conflicts.
+// Priority resolution (handled by resolveCalls): Ron > Kan > Pon > Chi.
+// Chi is only available to the next-in-turn seat AND only when the
+// rule allows it (Riichi yes, Sichuan no).
 func (s *State) AvailableCallsOnDiscard(discard tile.Tile, from int) []Call {
 	var out []Call
+	nextSeat := (from + 1) % NumPlayers
+	allowChi := s.Rule.AllowsChi()
 	for seat := 0; seat < NumPlayers; seat++ {
 		if seat == from || s.Players[seat].HasWon {
 			continue
@@ -179,6 +181,47 @@ func (s *State) AvailableCallsOnDiscard(discard tile.Tile, from int) []Call {
 				Support: []tile.Tile{discard, discard},
 			})
 		}
+		// Chi: only the next player in turn order, and only if the rule
+		// allows it. Each pattern produces a distinct Call so the
+		// player can pick which 2 hand-tiles to use.
+		if allowChi && seat == nextSeat && discard.IsSuit() {
+			for _, pat := range chiPatterns(discard) {
+				if hand.Concealed[pat[0]] > 0 && hand.Concealed[pat[1]] > 0 {
+					sup := []tile.Tile{pat[0], pat[1]}
+					out = append(out, Call{
+						Kind:    CallChi,
+						Player:  seat,
+						Tile:    discard,
+						Support: sup,
+					})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// chiPatterns returns the up-to-3 (support[0], support[1]) pairs that
+// would form a 3-tile run with `discard`. Each pair is the two hand
+// tiles needed; the discard fills in.
+func chiPatterns(discard tile.Tile) [][2]tile.Tile {
+	if !discard.IsSuit() {
+		return nil
+	}
+	n := discard.Number() // 1..9
+	base := tile.Tile(int(discard) - (n - 1)) // suit's "1" tile
+	var out [][2]tile.Tile
+	// (n-2, n-1) + n  — discard at the right edge
+	if n >= 3 {
+		out = append(out, [2]tile.Tile{base + tile.Tile(n-3), base + tile.Tile(n-2)})
+	}
+	// (n-1, n+1) — discard in the middle (kanchan-shaped chi)
+	if n >= 2 && n <= 8 {
+		out = append(out, [2]tile.Tile{base + tile.Tile(n-2), base + tile.Tile(n)})
+	}
+	// (n+1, n+2) + n — discard at the left edge
+	if n <= 7 {
+		out = append(out, [2]tile.Tile{base + tile.Tile(n), base + tile.Tile(n+1)})
 	}
 	return out
 }

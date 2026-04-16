@@ -20,6 +20,7 @@ type CallKind uint8
 
 const (
 	CallPass CallKind = iota
+	CallChi           // 吃 (Riichi only; next player only)
 	CallPon           // 碰
 	CallKan           // 杠 (open kan from discard)
 	CallRon           // 胡 (winning on discard)
@@ -29,6 +30,8 @@ func (k CallKind) String() string {
 	switch k {
 	case CallPass:
 		return "Pass"
+	case CallChi:
+		return "Chi"
 	case CallPon:
 		return "Pon"
 	case CallKan:

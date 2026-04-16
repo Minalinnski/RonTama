@@ -141,7 +141,7 @@ rontama
 | `r` | (日麻) 立直宣告 (打出选中的牌作为立直宣告牌) |
 | `m / p / s` | (川麻) 选择缺一门 |
 | `1-9/a-e` toggle | (川麻) 换三张时多选 3 张同色 |
-| `r / p / k / n` | 鸣牌：Ron / Pon / Kan / Pass |
+| `r / k / p / c / n` | 鸣牌：Ron / Kan / Pon / Chi / Pass（优先级 Ron > Kan > Pon > Chi）|
 | `q / esc / Ctrl+C` | 退出 |
 
 颜色：万红、筒蓝、索绿、字白。当前轮到打牌的玩家，他的 panel 边框会变青色 + 名字前有 `●`。立直过的玩家名字后面会有 `立`。

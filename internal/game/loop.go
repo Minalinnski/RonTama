@@ -4,6 +4,7 @@ import (
 	cryptoRand "crypto/rand"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/Minalinnski/RonTama/internal/rules"
 	"github.com/Minalinnski/RonTama/internal/shanten"
@@ -318,7 +319,7 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 	}
 
 	if len(declaredRons) > 0 {
-		_ = choices // pon/kan choices ignored when ron wins
+		_ = choices // pon/kan/chi choices ignored when ron wins
 		out := callResolution{endRound: false}
 		for _, r := range declaredRons {
 			ctx := rules.WinContext{
@@ -348,34 +349,36 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		return out
 	}
 
-	// No ron — apply the first kan/pon choice we received. Kan beats pon
-	// when both are claimed by the same player (the player can pick either).
-	// Across players: kan from any player beats pon from any player.
+	// No ron — pick by priority Kan > Pon > Chi. Across players: a
+	// higher-priority call from any player beats a lower-priority call
+	// from any player. Within the same priority, take the first choice.
 	var pickedCall *Call
-	for player, choice := range choices {
-		if choice.Kind == CallKan {
-			for _, c := range byPlayer[player] {
-				if c.Kind == CallKan {
-					tmp := c
-					pickedCall = &tmp
-					break
-				}
-			}
-			break
-		}
-	}
-	if pickedCall == nil {
+	priorities := []CallKind{CallKan, CallPon, CallChi}
+	for _, want := range priorities {
 		for player, choice := range choices {
-			if choice.Kind == CallPon {
-				for _, c := range byPlayer[player] {
-					if c.Kind == CallPon {
-						tmp := c
-						pickedCall = &tmp
-						break
+			if choice.Kind != want {
+				continue
+			}
+			for _, c := range byPlayer[player] {
+				// Match BOTH kind and (for chi) the chosen support tiles.
+				if c.Kind != want {
+					continue
+				}
+				if want == CallChi {
+					if !sameSupport(c.Support, choice.Support) {
+						continue
 					}
 				}
+				tmp := c
+				pickedCall = &tmp
 				break
 			}
+			if pickedCall != nil {
+				break
+			}
+		}
+		if pickedCall != nil {
+			break
 		}
 	}
 	if pickedCall != nil {
@@ -388,7 +391,7 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 			st.IppatsuValid[s] = false
 		}
 		switch c.Kind {
-		case CallPon:
+		case CallPon, CallChi:
 			st.skipNextDraw = true
 		case CallKan:
 			st.AfterKan = true
@@ -396,6 +399,23 @@ func resolveCalls(st *State, players [NumPlayers]Player, calls []Call, discard t
 		return callResolution{nextSeat: c.Player}
 	}
 	return callResolution{nextSeat: -1}
+}
+
+// sameSupport returns true if both tile slices contain the same
+// multiset of tiles (used to match a player's chi choice against the
+// available chi options).
+func sameSupport(a, b []tile.Tile) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var ca, cb [tile.NumKinds]int
+	for _, t := range a {
+		ca[t]++
+	}
+	for _, t := range b {
+		cb[t]++
+	}
+	return ca == cb
 }
 
 // pickExchangeDirection picks 1 (left), 2 (across), or 3 (right) at
@@ -482,9 +502,20 @@ func applyCall(st *State, c Call, discard tile.Tile, from int) {
 	}
 	tiles := append([]tile.Tile{}, c.Support...)
 	tiles = append(tiles, discard)
-	kind := tile.Pon
-	if c.Kind == CallKan {
+	// Sort chi tiles so the meld displays as 3-4-5 not 4-3-5 (cosmetic).
+	if c.Kind == CallChi {
+		sort.Slice(tiles, func(i, j int) bool { return tiles[i] < tiles[j] })
+	}
+	var kind tile.MeldKind
+	switch c.Kind {
+	case CallChi:
+		kind = tile.Chi
+	case CallPon:
+		kind = tile.Pon
+	case CallKan:
 		kind = tile.Kan
+	default:
+		kind = tile.Pon
 	}
 	hand.Melds = append(hand.Melds, tile.Meld{
 		Kind: kind, Tiles: tiles, From: from,

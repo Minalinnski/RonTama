@@ -299,27 +299,23 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m PlayModel) handleCallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	for _, c := range m.prompt.Calls {
-		switch msg.String() {
-		case "r":
-			if c.Kind == game.CallRon {
-				m.prompt.Respond <- c
-				m.prompt = nil
-				return m, nil
-			}
-		case "p":
-			if c.Kind == game.CallPon {
-				m.prompt.Respond <- c
-				m.prompt = nil
-				return m, nil
-			}
-		case "k":
-			if c.Kind == game.CallKan {
+	// Map a key letter → desired CallKind. We then iterate the offered
+	// calls and take the first one that matches.
+	wantByKey := map[string]game.CallKind{
+		"r": game.CallRon,
+		"k": game.CallKan,
+		"p": game.CallPon,
+		"c": game.CallChi,
+	}
+	if want, ok := wantByKey[msg.String()]; ok {
+		for _, c := range m.prompt.Calls {
+			if c.Kind == want {
 				m.prompt.Respond <- c
 				m.prompt = nil
 				return m, nil
 			}
 		}
+		// Key matched a real call kind but none was offered — ignore.
 	}
 	if msg.String() == "n" {
 		m.prompt.Respond <- game.Pass
@@ -769,17 +765,40 @@ func (m PlayModel) renderPrompt() string {
 			drewLabel, riichiHint, countdown,
 		))
 	case "call":
-		opts := []string{"n=pass"}
+		// Build a deduped option list (multiple chi patterns appear as one
+		// 'c=Chi' choice — first matching pattern wins on press).
+		seen := map[game.CallKind]bool{}
+		var ron, kan, pon, chi bool
 		for _, c := range m.prompt.Calls {
+			if seen[c.Kind] {
+				continue
+			}
+			seen[c.Kind] = true
 			switch c.Kind {
 			case game.CallRon:
-				opts = append([]string{"r=Ron"}, opts...)
-			case game.CallPon:
-				opts = append(opts, "p=Pon")
+				ron = true
 			case game.CallKan:
-				opts = append(opts, "k=Kan")
+				kan = true
+			case game.CallPon:
+				pon = true
+			case game.CallChi:
+				chi = true
 			}
 		}
+		opts := []string{}
+		if ron {
+			opts = append(opts, "r=Ron")
+		}
+		if kan {
+			opts = append(opts, "k=Kan")
+		}
+		if pon {
+			opts = append(opts, "p=Pon")
+		}
+		if chi {
+			opts = append(opts, "c=Chi")
+		}
+		opts = append(opts, "n=pass")
 		return promptStyle.Render(fmt.Sprintf("Call on %s? %s%s",
 			m.prompt.Discarded, strings.Join(opts, " "), countdown))
 	}
