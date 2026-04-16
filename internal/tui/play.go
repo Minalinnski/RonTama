@@ -4,6 +4,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -26,12 +27,17 @@ type EventMsg struct {
 
 // HumanPromptMsg asks the user to make a decision (discard / call / dingque).
 type HumanPromptMsg struct {
-	Kind     string      // "dingque" | "draw" | "call"
-	View     game.PlayerView
-	Calls    []game.Call // for "call"
-	Respond  chan any    // user pushes their answer here
-	Discarded tile.Tile  // for "call" — the tile being acted on
+	Kind      string // "dingque" | "draw" | "call" | "exchange3"
+	View      game.PlayerView
+	Calls     []game.Call // for "call"
+	Respond   chan any    // user pushes their answer here
+	Discarded tile.Tile   // for "call" — the tile being acted on
+	Deadline  time.Time   // zero = no deadline (local play); non-zero = display countdown
 }
+
+// tickMsg fires periodically while a Deadline-bearing prompt is open
+// so the countdown re-renders.
+type tickMsg time.Time
 
 // RoundDoneMsg signals the round ended.
 type RoundDoneMsg struct {
@@ -97,6 +103,18 @@ func (m PlayModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = 0
 		default:
 			m.selected = 0
+		}
+		// If the prompt has a deadline, start the countdown tick loop.
+		if !msg.Deadline.IsZero() {
+			return m, countdownTick()
+		}
+		return m, nil
+
+	case tickMsg:
+		// Re-render so the countdown moves; reschedule if the prompt is
+		// still open and the deadline hasn't expired.
+		if m.prompt != nil && !m.prompt.Deadline.IsZero() && time.Now().Before(m.prompt.Deadline) {
+			return m, countdownTick()
 		}
 		return m, nil
 
@@ -285,6 +303,15 @@ func (m PlayModel) handleCallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt = nil
 	}
 	return m, nil
+}
+
+// countdownTick schedules a one-shot tea.Cmd that fires after 250ms.
+// PlayModel.Update reschedules another tick while a deadline-bearing
+// prompt remains open.
+func countdownTick() tea.Cmd {
+	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // View implements tea.Model.
@@ -669,8 +696,9 @@ func (m PlayModel) renderPrompt() string {
 		if m.roundDone {
 			return ""
 		}
-		return chromeStyle.Render("(bots playing… press q to quit)")
+		return chromeStyle.Render("(waiting…  press q to quit)")
 	}
+	countdown := m.renderCountdown()
 	switch m.prompt.Kind {
 	case "exchange3":
 		tiles := m.prompt.View.OwnHand.ConcealedTiles()
@@ -692,18 +720,18 @@ func (m PlayModel) renderPrompt() string {
 			}
 		}
 		return promptStyle.Render(fmt.Sprintf(
-			"换三张: pick 3 tiles of ONE suit (1-9/a-e to toggle, esc to clear)  selected: %d/3%s",
-			picked, hint))
+			"换三张: pick 3 tiles of ONE suit (1-9/a-e to toggle, esc to clear)  selected: %d/3%s%s",
+			picked, hint, countdown))
 	case "dingque":
-		return promptStyle.Render("Choose 缺 suit:  m=萬  p=筒  s=索")
+		return promptStyle.Render("Choose 缺 suit:  m=萬  p=筒  s=索" + countdown)
 	case "draw":
 		drewLabel := "no draw (post-call discard)"
 		if m.prompt.View.JustDrew != nil {
 			drewLabel = "drew " + m.prompt.View.JustDrew.String()
 		}
 		return promptStyle.Render(fmt.Sprintf(
-			"Your turn — %s.  ←/→ or 1-9/a-e select  space/enter discard  t=tsumo  q=quit",
-			drewLabel,
+			"Your turn — %s.  ←/→ or 1-9/a-e select  space/enter discard  t=tsumo  q=quit%s",
+			drewLabel, countdown,
 		))
 	case "call":
 		opts := []string{"n=pass"}
@@ -717,9 +745,27 @@ func (m PlayModel) renderPrompt() string {
 				opts = append(opts, "k=Kan")
 			}
 		}
-		return promptStyle.Render(fmt.Sprintf("Call on %s? %s", m.prompt.Discarded, strings.Join(opts, " ")))
+		return promptStyle.Render(fmt.Sprintf("Call on %s? %s%s",
+			m.prompt.Discarded, strings.Join(opts, " "), countdown))
 	}
 	return ""
+}
+
+// renderCountdown returns "  ⏳ Ns" when the prompt has an active deadline.
+func (m PlayModel) renderCountdown() string {
+	if m.prompt == nil || m.prompt.Deadline.IsZero() {
+		return ""
+	}
+	left := time.Until(m.prompt.Deadline)
+	if left < 0 {
+		left = 0
+	}
+	color := turnColor
+	if left < 5*time.Second {
+		color = winColor // pink/red as time runs out
+	}
+	return lipgloss.NewStyle().Foreground(color).Bold(true).Render(
+		fmt.Sprintf("  ⏳ %ds", int(left.Seconds()+0.5)))
 }
 
 func appendLog(log []string, line string, max int) []string {

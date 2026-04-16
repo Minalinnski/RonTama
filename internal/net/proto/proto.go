@@ -80,7 +80,8 @@ type SeatPublic struct {
 
 // AskExchange3 asks the client for 3 tiles of one suit to pass.
 type AskExchange3 struct {
-	OwnHand [tile.NumKinds]int `json:"own_hand"`
+	OwnHand    [tile.NumKinds]int `json:"own_hand"`
+	TimeoutSec int                `json:"timeout_sec,omitempty"`
 }
 
 // AnswerExchange3 is the client's exchange-three picks.
@@ -90,21 +91,24 @@ type AnswerExchange3 struct {
 
 // AskDingque asks the client for their dingque suit choice.
 type AskDingque struct {
-	OwnHand [tile.NumKinds]int `json:"own_hand"`
+	OwnHand    [tile.NumKinds]int `json:"own_hand"`
+	TimeoutSec int                `json:"timeout_sec,omitempty"`
 }
 
 // AskDraw asks the client for their post-draw action.
 type AskDraw struct {
-	OwnHand  [tile.NumKinds]int `json:"own_hand"`
-	JustDrew tile.Tile          `json:"just_drew"`
-	Dingque  tile.Suit          `json:"dingque"`
+	OwnHand    [tile.NumKinds]int `json:"own_hand"`
+	JustDrew   tile.Tile          `json:"just_drew"`
+	Dingque    tile.Suit          `json:"dingque"`
+	TimeoutSec int                `json:"timeout_sec,omitempty"`
 }
 
 // AskCall asks the client whether to call a discard.
 type AskCall struct {
-	Discarded tile.Tile   `json:"discarded"`
-	From      int         `json:"from"`
-	Calls     []game.Call `json:"calls"`
+	Discarded  tile.Tile   `json:"discarded"`
+	From       int         `json:"from"`
+	Calls      []game.Call `json:"calls"`
+	TimeoutSec int         `json:"timeout_sec,omitempty"`
 }
 
 // AnswerDingque is the client's dingque choice.

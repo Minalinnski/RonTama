@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -12,6 +13,16 @@ import (
 	"github.com/Minalinnski/RonTama/internal/tile"
 	"github.com/Minalinnski/RonTama/internal/tui"
 )
+
+// deadlineFrom translates a server-supplied TimeoutSec into a wall-clock
+// deadline relative to "now" (received time). Returns the zero Time when
+// no timeout is in effect.
+func deadlineFrom(timeoutSec int) time.Time {
+	if timeoutSec <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(timeoutSec) * time.Second)
+}
 
 // TUIDecider implements client.Decider by forwarding prompts to a
 // running Bubble Tea program (the same PlayModel used for local play).
@@ -70,7 +81,10 @@ func (d *TUIDecider) AnswerExchange3(req proto.AskExchange3) [3]tile.Tile {
 		Seat:    d.seat,
 		OwnHand: tile.Hand{Concealed: req.OwnHand},
 	}
-	d.Prog.Send(tui.HumanPromptMsg{Kind: "exchange3", View: view, Respond: resp})
+	d.Prog.Send(tui.HumanPromptMsg{
+		Kind: "exchange3", View: view, Respond: resp,
+		Deadline: deadlineFrom(req.TimeoutSec),
+	})
 	v := <-resp
 	if picks, ok := v.([3]tile.Tile); ok {
 		return picks
@@ -86,7 +100,10 @@ func (d *TUIDecider) AnswerDingque(req proto.AskDingque) tile.Suit {
 		Seat:    d.seat,
 		OwnHand: tile.Hand{Concealed: req.OwnHand},
 	}
-	d.Prog.Send(tui.HumanPromptMsg{Kind: "dingque", View: view, Respond: resp})
+	d.Prog.Send(tui.HumanPromptMsg{
+		Kind: "dingque", View: view, Respond: resp,
+		Deadline: deadlineFrom(req.TimeoutSec),
+	})
 	v := <-resp
 	if s, ok := v.(tile.Suit); ok {
 		return s
@@ -107,7 +124,10 @@ func (d *TUIDecider) AnswerDraw(req proto.AskDraw) game.DrawAction {
 		JustDrew: &jd,
 	}
 	view.Dingque[d.seat] = req.Dingque
-	d.Prog.Send(tui.HumanPromptMsg{Kind: "draw", View: view, Respond: resp})
+	d.Prog.Send(tui.HumanPromptMsg{
+		Kind: "draw", View: view, Respond: resp,
+		Deadline: deadlineFrom(req.TimeoutSec),
+	})
 	v := <-resp
 	if a, ok := v.(game.DrawAction); ok {
 		return a
@@ -124,6 +144,7 @@ func (d *TUIDecider) AnswerCall(req proto.AskCall) game.Call {
 	}
 	d.Prog.Send(tui.HumanPromptMsg{
 		Kind: "call", View: view, Discarded: req.Discarded, Calls: req.Calls, Respond: resp,
+		Deadline: deadlineFrom(req.TimeoutSec),
 	})
 	v := <-resp
 	if c, ok := v.(game.Call); ok {

@@ -56,6 +56,12 @@ type Config struct {
 	// ExtraObserver is invoked alongside the always-present multicast
 	// observer. Lets a TUI host see local state changes too.
 	ExtraObserver game.Observer
+
+	// PromptTimeout: how long the server waits for a remote client's
+	// answer to any Ask* message. On expiry the server applies the
+	// fallback default (Pass for call, first concealed tile for
+	// discard, SuitMan for dingque). Default: 30 seconds.
+	PromptTimeout time.Duration
 }
 
 // Run starts the server and blocks until the round finishes (or ctx is cancelled).
@@ -71,6 +77,10 @@ func Run(ctx context.Context, cfg Config) error {
 	rule := cfg.Rule
 	if rule == nil {
 		rule = sichuan.New()
+	}
+	promptTimeout := cfg.PromptTimeout
+	if promptTimeout <= 0 {
+		promptTimeout = 30 * time.Second
 	}
 
 	// Identify remote slots (nil entries in cfg.Players).
@@ -132,6 +142,7 @@ awaitLoop:
 		case c := <-connCh:
 			seat := remoteSeats[connected]
 			np := newNetPlayer(c, seat, rule, cfg.Log)
+			np.timeout = promptTimeout
 			netPlayers = append(netPlayers, np)
 			players[seat] = np
 			if err := np.sendHello(); err != nil {
@@ -205,10 +216,11 @@ func (c *chainObs) OnRoundEnd(s *game.State, r *game.RoundResult) {
 
 // netPlayer is a game.Player backed by a TCP connection.
 type netPlayer struct {
-	conn net.Conn
-	seat int
-	rule rules.RuleSet
-	log  *slog.Logger
+	conn    net.Conn
+	seat    int
+	rule    rules.RuleSet
+	log     *slog.Logger
+	timeout time.Duration // per-prompt read deadline; 0 = wait forever
 
 	mu  sync.Mutex
 	enc *bufio.Writer
@@ -227,7 +239,7 @@ func (np *netPlayer) Name() string { return fmt.Sprintf("net-%d", np.seat) }
 
 // ChooseExchange3 implements game.Player by relaying to the client.
 func (np *netPlayer) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
-	body := proto.AskExchange3{OwnHand: view.OwnHand.Concealed}
+	body := proto.AskExchange3{OwnHand: view.OwnHand.Concealed, TimeoutSec: np.timeoutSec()}
 	if err := np.send(proto.KindAskExchange3, body); err != nil {
 		np.log.Warn("ask_exchange3 send failed", "err", err)
 		return [3]tile.Tile{}
@@ -266,6 +278,10 @@ func (np *netPlayer) send(kind string, body any) error {
 func (np *netPlayer) recv() (proto.Envelope, error) {
 	np.mu.Lock()
 	defer np.mu.Unlock()
+	if np.timeout > 0 {
+		_ = np.conn.SetReadDeadline(time.Now().Add(np.timeout))
+		defer np.conn.SetReadDeadline(time.Time{})
+	}
 	var env proto.Envelope
 	if err := np.dec.Decode(&env); err != nil {
 		return env, err
@@ -273,8 +289,17 @@ func (np *netPlayer) recv() (proto.Envelope, error) {
 	return env, nil
 }
 
+// timeoutSec returns the prompt timeout in whole seconds for inclusion
+// in Ask* messages so the client can render a countdown.
+func (np *netPlayer) timeoutSec() int {
+	if np.timeout <= 0 {
+		return 0
+	}
+	return int(np.timeout / time.Second)
+}
+
 func (np *netPlayer) ChooseDingque(view game.PlayerView) tile.Suit {
-	body := proto.AskDingque{OwnHand: view.OwnHand.Concealed}
+	body := proto.AskDingque{OwnHand: view.OwnHand.Concealed, TimeoutSec: np.timeoutSec()}
 	if err := np.send(proto.KindAskDingque, body); err != nil {
 		np.log.Warn("ask_dingque failed", "err", err)
 		return tile.SuitMan
@@ -297,9 +322,10 @@ func (np *netPlayer) ChooseDingque(view game.PlayerView) tile.Suit {
 
 func (np *netPlayer) OnDraw(view game.PlayerView) game.DrawAction {
 	body := proto.AskDraw{
-		OwnHand:  view.OwnHand.Concealed,
-		JustDrew: deref(view.JustDrew),
-		Dingque:  view.Dingque[view.Seat],
+		OwnHand:    view.OwnHand.Concealed,
+		JustDrew:   deref(view.JustDrew),
+		Dingque:    view.Dingque[view.Seat],
+		TimeoutSec: np.timeoutSec(),
 	}
 	if err := np.send(proto.KindAskDraw, body); err != nil {
 		return fallbackDiscard(view)
@@ -319,7 +345,7 @@ func (np *netPlayer) OnDraw(view game.PlayerView) game.DrawAction {
 }
 
 func (np *netPlayer) OnCallOpportunity(view game.PlayerView, discarded tile.Tile, from int, opps []game.Call) game.Call {
-	body := proto.AskCall{Discarded: discarded, From: from, Calls: opps}
+	body := proto.AskCall{Discarded: discarded, From: from, Calls: opps, TimeoutSec: np.timeoutSec()}
 	if err := np.send(proto.KindAskCall, body); err != nil {
 		return game.Pass
 	}
