@@ -64,8 +64,8 @@ func TestTile_String(t *testing.T) {
 		Man1: "1m", Man9: "9m",
 		Pin1: "1p", Pin9: "9p",
 		Sou1: "1s", Sou9: "9s",
-		East: "E", South: "S", West: "W", North: "N",
-		White: "Wh", Green: "Gr", Red: "Rd",
+		East: "東", South: "南", West: "西", North: "北",
+		White: "白", Green: "發", Red: "中",
 	}
 	for tile, want := range cases {
 		if got := tile.String(); got != want {

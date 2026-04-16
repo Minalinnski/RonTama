@@ -157,8 +157,8 @@ func TestAdvancingTiles_Tenpai(t *testing.T) {
 	}
 	advance := AdvancingTiles(h, 0, seen, OfStandard)
 	got := tilesToString(advance)
-	if !strings.Contains(got, "E") || !strings.Contains(got, "S") {
-		t.Errorf("advancing tiles = %q, want to contain E and S (1z and 2z)", got)
+	if !strings.Contains(got, "東") || !strings.Contains(got, "南") {
+		t.Errorf("advancing tiles = %q, want to contain 東 and 南 (1z and 2z)", got)
 	}
 }
 

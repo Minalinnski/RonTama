@@ -262,6 +262,11 @@ func (m PlayModel) handleDrawKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected++
 		}
 	case "t":
+		// Only let the player tsumo when the rule actually accepts it
+		// (e.g. Riichi requires a yaku). Silently swallow otherwise.
+		if !canTsumoNow(m.prompt.View) {
+			return m, nil
+		}
 		m.prompt.Respond <- game.DrawAction{Kind: game.DrawTsumo}
 		m.prompt = nil
 	case "r":
@@ -322,6 +327,32 @@ func (m PlayModel) handleCallKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prompt = nil
 	}
 	return m, nil
+}
+
+// canTsumoNow returns true when the current draw makes a winning hand
+// under the rule. Used by the TUI to gate the 't' key and the prompt
+// hint — we don't want to OFFER tsumo if the game would reject it
+// (Riichi specifically requires a yaku, so 4-sets+1-pair without any
+// yaku-bearing condition is invalid).
+func canTsumoNow(view game.PlayerView) bool {
+	if view.JustDrew == nil {
+		return false
+	}
+	hand := view.OwnHand
+	concealed := hand.Concealed
+	concealed[*view.JustDrew]--
+	probe := tile.Hand{Concealed: concealed, Melds: hand.Melds}
+	ctx := rules.WinContext{
+		WinningTile: *view.JustDrew,
+		Tsumo:       true,
+		From:        -1,
+		Seat:        view.Seat,
+		Dealer:      view.Dealer,
+		Dingque:     view.Dingque[view.Seat],
+		Riichi:      view.Riichi[view.Seat],
+		RoundWind:   tile.East, // Phase 6 simplification — round wind is always East
+	}
+	return view.Rule.CanWin(probe, *view.JustDrew, ctx)
 }
 
 // countdownTick schedules a one-shot tea.Cmd that fires after 250ms.
@@ -462,11 +493,15 @@ func (m PlayModel) renderHorizSeatPanel(seat, width int) string {
 	if current {
 		titleColor = turnColor
 	}
+	label := seatLabel(seat)
+	if p.Name != "" {
+		label = fmt.Sprintf("%s [%s]", seatLabel(seat), p.Name)
+	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(titleColor).Render(
-		fmt.Sprintf("● %s%s", seatLabel(seat), winMark(p.HasWon)))
+		fmt.Sprintf("● %s%s", label, winMark(p.HasWon)))
 	if !current {
 		title = lipgloss.NewStyle().Foreground(titleColor).Render(
-			fmt.Sprintf("  %s%s", seatLabel(seat), winMark(p.HasWon)))
+			fmt.Sprintf("  %s%s", label, winMark(p.HasWon)))
 	}
 	info := chromeStyle.Render(fmt.Sprintf("Hand:%d  缺:%s  Score:%+d",
 		p.Hand.ConcealedCount(), dingqueLabel(p.Dingque), p.Score))
@@ -497,8 +532,14 @@ func (m PlayModel) renderVertSeatPanel(seat, width int) string {
 	if current {
 		bullet = "● "
 	}
+	label := seatLabel(seat)
+	if p.Name != "" {
+		// Side seats have limited width; show one-line "Name · Pos" if
+		// there's room, else just Name.
+		label = p.Name
+	}
 	title := lipgloss.NewStyle().Bold(current).Foreground(titleColor).Render(
-		fmt.Sprintf("%s%s%s", bullet, seatLabel(seat), winMark(p.HasWon)))
+		fmt.Sprintf("%s%s%s", bullet, label, winMark(p.HasWon)))
 	if st.Riichi[seat] {
 		title = title + lipgloss.NewStyle().Foreground(winColor).Render(" 立")
 	}
@@ -551,8 +592,12 @@ func (m PlayModel) renderSelfPanel(width int) string {
 	if current {
 		bullet = "● "
 	}
+	youName := "YOU"
+	if p.Name != "" {
+		youName = fmt.Sprintf("YOU [%s]", p.Name)
+	}
 	title := lipgloss.NewStyle().Bold(current).Foreground(titleColor).Render(
-		fmt.Sprintf("%sYOU (%s)%s", bullet, seatLabel(HumanSeat), winMark(p.HasWon)))
+		fmt.Sprintf("%s%s (%s)%s", bullet, youName, seatLabel(HumanSeat), winMark(p.HasWon)))
 	if st.Riichi[HumanSeat] {
 		title = title + lipgloss.NewStyle().Foreground(winColor).Render(" 立")
 	}
@@ -755,14 +800,18 @@ func (m PlayModel) renderPrompt() string {
 		if m.prompt.View.JustDrew != nil {
 			drewLabel = "drew " + m.prompt.View.JustDrew.String()
 		}
+		tsumoHint := ""
+		if canTsumoNow(m.prompt.View) {
+			tsumoHint = "  t=自摸"
+		}
 		// Show the riichi hint only for Riichi rules (not Sichuan).
 		riichiHint := ""
 		if !m.prompt.View.Rule.RequiresDingque() {
 			riichiHint = "  r=立直"
 		}
 		return promptStyle.Render(fmt.Sprintf(
-			"Your turn — %s.  ←/→ or 1-9/a-e select  space=discard  t=tsumo%s  q=quit%s",
-			drewLabel, riichiHint, countdown,
+			"Your turn — %s.  ←/→ or 1-9/a-e select  space=discard%s%s  q=quit%s",
+			drewLabel, tsumoHint, riichiHint, countdown,
 		))
 	case "call":
 		// Build a deduped option list (multiple chi patterns appear as one

@@ -91,6 +91,13 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 	if err != nil {
 		return nil, err
 	}
+	// Seed seat names from the player implementations so observers
+	// (TUI panels, network StateUpdates) can show who's who.
+	for i := 0; i < NumPlayers; i++ {
+		if players[i] != nil {
+			st.Players[i].Name = players[i].Name()
+		}
+	}
 	obs.OnRoundStart(st)
 
 	// Phase 1a: exchange-three (Sichuan 换三张). Each player picks 3
@@ -169,11 +176,43 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 		st.TurnsTaken++
 
 		action := players[seat].OnDraw(st.View(seat))
+
+		// If tsumo was declared but turns out invalid (no yaku, post-call
+		// hand without kan-replacement, etc.), don't kill the round —
+		// log a warning and downgrade to a discard of the drawn tile.
+		// The Player implementation has a contract bug to fix; the
+		// game continues so the table doesn't blow up under the user.
+		if action.Kind == DrawTsumo {
+			if st.Players[seat].JustDrew == nil {
+				log.Warn("invalid tsumo (no draw) — falling back to discard", "seat", seat)
+				action = DrawAction{Kind: DrawDiscard, Discard: drawn}
+			} else {
+				ctx := rules.WinContext{
+					WinningTile: drawn,
+					Tsumo:       true,
+					From:        -1,
+					Seat:        seat,
+					Dealer:      st.Dealer,
+					Dingque:     st.Players[seat].Dingque,
+					LastTile:    st.LastTile,
+					AfterKan:    st.AfterKan,
+					Riichi:      st.Riichi[seat],
+					Ippatsu:     st.IppatsuValid[seat],
+					RoundWind:   tile.East,
+				}
+				st.Players[seat].Hand.Remove(drawn)
+				if !rule.CanWin(st.Players[seat].Hand, drawn, ctx) {
+					st.Players[seat].Hand.Add(drawn)
+					log.Warn("invalid tsumo (CanWin=false) — falling back to discard", "seat", seat)
+					action = DrawAction{Kind: DrawDiscard, Discard: drawn}
+				} else {
+					st.Players[seat].Hand.Add(drawn)
+				}
+			}
+		}
+
 		switch action.Kind {
 		case DrawTsumo:
-			if st.Players[seat].JustDrew == nil {
-				return nil, fmt.Errorf("seat %d declared tsumo without a draw (post-call hands cannot tsumo without kan-replacement)", seat)
-			}
 			ctx := rules.WinContext{
 				WinningTile: drawn,
 				Tsumo:       true,
@@ -187,13 +226,7 @@ func RunRoundWithObserver(rule rules.RuleSet, players [NumPlayers]Player, dealer
 				Ippatsu:     st.IppatsuValid[seat],
 				RoundWind:   tile.East,
 			}
-			// Validate: hand+drawn was already added, validate by removing
-			// drawn before passing to CanWin (CanWin re-adds it).
 			st.Players[seat].Hand.Remove(drawn)
-			if !rule.CanWin(st.Players[seat].Hand, drawn, ctx) {
-				st.Players[seat].Hand.Add(drawn)
-				return nil, fmt.Errorf("seat %d declared invalid tsumo", seat)
-			}
 			score := rule.ScoreWin(st.Players[seat].Hand, drawn, ctx)
 			applySettlement(st, seat, ctx, score)
 			win := WinEvent{Seat: seat, Tsumo: true, From: -1, Tile: drawn, Score: score}

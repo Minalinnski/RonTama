@@ -143,8 +143,11 @@ func (t Tile) SuitOffset() int {
 	}
 }
 
-// String returns a short ASCII identifier: "1m", "9p", "5s", "E", "S",
-// "W", "N", "Wh", "Gr", "Rd".
+// String returns a short identifier mixing ASCII for suits and CJK
+// for honors: "1m", "9p", "5s", "東", "南", "西", "北", "白", "發", "中".
+//
+// CJK characters are 2 terminal columns wide (same as "1m"), so the
+// renderer can lay them out in the same fixed-width tile boxes.
 func (t Tile) String() string {
 	if t.IsSuit() {
 		suit := "mps"[t/9]
@@ -152,19 +155,19 @@ func (t Tile) String() string {
 	}
 	switch t {
 	case East:
-		return "E"
+		return "東"
 	case South:
-		return "S"
+		return "南"
 	case West:
-		return "W"
+		return "西"
 	case North:
-		return "N"
+		return "北"
 	case White:
-		return "Wh"
+		return "白"
 	case Green:
-		return "Gr"
+		return "發"
 	case Red:
-		return "Rd"
+		return "中"
 	}
 	return fmt.Sprintf("?%d", uint8(t))
 }

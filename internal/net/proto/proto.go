@@ -39,11 +39,19 @@ const (
 
 // Message kinds (client -> server).
 const (
+	KindRegister        = "register" // sent right after Hello with the client's display name
 	KindAnswerExchange3 = "answer_exchange3"
 	KindAnswerDingque   = "answer_dingque"
 	KindAnswerDraw      = "answer_draw"
 	KindAnswerCall      = "answer_call"
 )
+
+// Register is the first message a client sends after receiving Hello.
+// Carries the user's display name for showing in others' TUIs and for
+// future session-resumption matching.
+type Register struct {
+	Name string `json:"name"`
+}
 
 // Hello is the first message a client receives upon joining.
 type Hello struct {
@@ -70,12 +78,13 @@ type StateUpdate struct {
 
 // SeatPublic is the per-seat info every observer sees.
 type SeatPublic struct {
-	Dingque       tile.Suit   `json:"dingque"`
-	HandSize      int         `json:"hand_size"`
-	Melds         []tile.Meld `json:"melds"`
-	Discards      []tile.Tile `json:"discards"`
-	Score         int         `json:"score"`
-	HasWon        bool        `json:"has_won"`
+	Name     string      `json:"name"`
+	Dingque  tile.Suit   `json:"dingque"`
+	HandSize int         `json:"hand_size"`
+	Melds    []tile.Meld `json:"melds"`
+	Discards []tile.Tile `json:"discards"`
+	Score    int         `json:"score"`
+	HasWon   bool        `json:"has_won"`
 }
 
 // AskExchange3 asks the client for 3 tiles of one suit to pass.

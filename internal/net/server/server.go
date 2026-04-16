@@ -148,8 +148,12 @@ awaitLoop:
 			if err := np.sendHello(); err != nil {
 				cfg.Log.Warn("hello send failed", "seat", seat, "err", err)
 			}
+			// Try to read the immediate Register message to capture the
+			// client's display name. Time-bounded so a misbehaving client
+			// doesn't stall the lobby.
+			np.readRegister()
 			connected++
-			cfg.Log.Info("client joined", "seat", seat, "remote", c.RemoteAddr())
+			cfg.Log.Info("client joined", "seat", seat, "name", np.userName, "remote", c.RemoteAddr())
 		case <-deadline:
 			cfg.Log.Info("join timeout — filling remaining remote seats with Easy bots", "filled", connected, "missing", len(remoteSeats)-connected)
 			break awaitLoop
@@ -216,11 +220,12 @@ func (c *chainObs) OnRoundEnd(s *game.State, r *game.RoundResult) {
 
 // netPlayer is a game.Player backed by a TCP connection.
 type netPlayer struct {
-	conn    net.Conn
-	seat    int
-	rule    rules.RuleSet
-	log     *slog.Logger
-	timeout time.Duration // per-prompt read deadline; 0 = wait forever
+	conn     net.Conn
+	seat     int
+	rule     rules.RuleSet
+	log      *slog.Logger
+	timeout  time.Duration // per-prompt read deadline; 0 = wait forever
+	userName string         // populated from Register message
 
 	mu  sync.Mutex
 	enc *bufio.Writer
@@ -235,7 +240,34 @@ func newNetPlayer(c net.Conn, seat int, rule rules.RuleSet, log *slog.Logger) *n
 	}
 }
 
-func (np *netPlayer) Name() string { return fmt.Sprintf("net-%d", np.seat) }
+func (np *netPlayer) Name() string {
+	if np.userName != "" {
+		return np.userName
+	}
+	return fmt.Sprintf("net-%d", np.seat)
+}
+
+// readRegister blocks briefly waiting for the client's KindRegister
+// message right after Hello. Best-effort: a misbehaving client can
+// skip it and we just fall back to the synthetic 'net-N' name.
+func (np *netPlayer) readRegister() {
+	np.mu.Lock()
+	defer np.mu.Unlock()
+	_ = np.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	defer np.conn.SetReadDeadline(time.Time{})
+	var env proto.Envelope
+	if err := np.dec.Decode(&env); err != nil {
+		return
+	}
+	if env.Kind != proto.KindRegister {
+		return
+	}
+	var reg proto.Register
+	if err := proto.DecodeBody(env, &reg); err != nil {
+		return
+	}
+	np.userName = reg.Name
+}
 
 // ChooseExchange3 implements game.Player by relaying to the client.
 func (np *netPlayer) ChooseExchange3(view game.PlayerView) [3]tile.Tile {
@@ -443,6 +475,7 @@ func snapshotFor(s *game.State, seat int, note string) proto.StateUpdate {
 	}
 	for i := 0; i < game.NumPlayers; i++ {
 		upd.Seats[i] = proto.SeatPublic{
+			Name:     s.Players[i].Name,
 			Dingque:  s.Players[i].Dingque,
 			HandSize: s.Players[i].Hand.ConcealedCount(),
 			Melds:    s.Players[i].Hand.Melds,

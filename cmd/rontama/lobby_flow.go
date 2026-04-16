@@ -51,7 +51,7 @@ func runLobbyLocal(res tui.LobbyResult) error {
 	prog := tea.NewProgram(model, tea.WithAltScreen())
 
 	go func() {
-		players := buildLocalPlayers(res, prog)
+		players := buildLocalPlayersNamed(res, prog, res.PlayerName)
 		obs := tui.NewTUIObserver(prog)
 		log := slog.New(slog.NewTextHandler(io.Discard, nil))
 		_, err := game.RunRoundWithObserver(rule, players, 0, log, obs)
@@ -86,7 +86,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 	if !res.HostBot {
 		// Pure server (you don't play). Fill non-remote seats with bots
 		// per lobby choice; remote seats wait for clients.
-		players := buildServerSeats(res, nil)
+		players := buildServerSeatsNamed(res, nil, res.PlayerName)
 		cfg := server.Config{
 			Addr:        ":7777",
 			JoinTimeout: res.Wait,
@@ -101,7 +101,7 @@ func runLobbyHost(res tui.LobbyResult) error {
 	model := tui.NewPlayModel(rule)
 	model.Banner = formatHostBanner(res, 7777)
 	prog := tea.NewProgram(model, tea.WithAltScreen())
-	players := buildServerSeats(res, prog)
+	players := buildServerSeatsNamed(res, prog, res.PlayerName)
 	obs := tui.NewTUIObserver(prog)
 
 	go func() {
@@ -131,27 +131,25 @@ func runLobbyJoin(res tui.LobbyResult) error {
 		return err
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	return joinAsTUI(res.JoinAt, rule, log)
+	return joinAsTUINamed(res.JoinAt, rule, res.PlayerName, log)
 }
 
-// buildLocalPlayers turns lobby seat config into a [4]game.Player for local play.
-func buildLocalPlayers(res tui.LobbyResult, prog *tea.Program) [game.NumPlayers]game.Player {
+// buildLocalPlayersNamed turns lobby seat config into a [4]game.Player
+// for local play, with the human at seat 0 carrying the lobby-supplied name.
+func buildLocalPlayersNamed(res tui.LobbyResult, prog *tea.Program, humanName string) [game.NumPlayers]game.Player {
 	var players [game.NumPlayers]game.Player
 	for i, role := range res.Seats {
-		players[i] = playerFromRole(role, i, prog)
+		players[i] = playerFromRoleNamed(role, i, prog, humanName)
 		if players[i] == nil {
-			// SeatRemote shouldn't appear in local games; treat as Easy.
 			players[i] = easy.New(fmt.Sprintf("seat%d-fallback", i))
 		}
 	}
 	return players
 }
 
-// buildServerSeats turns lobby seat config into the Players[4] for server.Config:
-// SeatRemote → nil (server fills from connection)
-// SeatHuman + prog != nil → HumanPlayer (host plays via TUI)
-// SeatBot* → corresponding bot
-func buildServerSeats(res tui.LobbyResult, prog *tea.Program) [game.NumPlayers]game.Player {
+// buildServerSeatsNamed turns lobby seat config into the Players[4] for
+// server.Config (nil entries become remote slots).
+func buildServerSeatsNamed(res tui.LobbyResult, prog *tea.Program, humanName string) [game.NumPlayers]game.Player {
 	var players [game.NumPlayers]game.Player
 	for i, role := range res.Seats {
 		switch role {
@@ -159,29 +157,29 @@ func buildServerSeats(res tui.LobbyResult, prog *tea.Program) [game.NumPlayers]g
 			players[i] = nil
 		case tui.SeatHuman:
 			if prog != nil {
-				players[i] = tui.NewHumanPlayer("you", prog)
+				players[i] = tui.NewHumanPlayer(humanName, prog)
 			}
 		default:
-			players[i] = playerFromRole(role, i, prog)
+			players[i] = playerFromRoleNamed(role, i, prog, humanName)
 		}
 	}
 	return players
 }
 
-// playerFromRole maps a single lobby SeatRole to a concrete game.Player.
-func playerFromRole(role tui.SeatRole, seat int, prog *tea.Program) game.Player {
+// playerFromRoleNamed maps a single lobby SeatRole to a concrete game.Player.
+func playerFromRoleNamed(role tui.SeatRole, seat int, prog *tea.Program, humanName string) game.Player {
 	switch role {
 	case tui.SeatHuman:
 		if prog != nil {
-			return tui.NewHumanPlayer("you", prog)
+			return tui.NewHumanPlayer(humanName, prog)
 		}
-		return easy.New("you-fallback")
+		return easy.New(humanName + "-fallback")
 	case tui.SeatBotEasy:
-		return easy.New(fmt.Sprintf("E%d", seat))
+		return easy.New(fmt.Sprintf("Easy bot %d", seat))
 	case tui.SeatBotMedium:
-		return medium.New(fmt.Sprintf("M%d", seat))
+		return medium.New(fmt.Sprintf("Medium bot %d", seat))
 	case tui.SeatBotHard:
-		return hard.New(fmt.Sprintf("H%d", seat))
+		return hard.New(fmt.Sprintf("Hard bot %d", seat))
 	}
 	return nil
 }

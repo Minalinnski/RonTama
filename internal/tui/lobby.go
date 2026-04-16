@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -52,12 +53,13 @@ func (r SeatRole) String() string {
 // LobbyResult is what RunLobby returns to main; main dispatches into
 // the play layer accordingly.
 type LobbyResult struct {
-	Mode    LobbyMode
-	Rule    string // "sichuan" | "riichi"
-	Seats   [4]SeatRole
-	JoinAt  string        // for LobbyModeJoin: target address
-	Wait    time.Duration // for LobbyModeHost: how long to wait for joiners
-	HostBot bool          // for LobbyModeHost: also play locally as seat 0 (true) or pure server (false)
+	Mode       LobbyMode
+	Rule       string // "sichuan" | "riichi"
+	Seats      [4]SeatRole
+	JoinAt     string        // for LobbyModeJoin: target address
+	Wait       time.Duration // for LobbyModeHost: how long to wait for joiners
+	HostBot    bool          // for LobbyModeHost: also play locally as seat 0 (true) or pure server (false)
+	PlayerName string        // user's display name (carries through to local seats and network registration)
 }
 
 // lobbyState distinguishes the lobby's screens.
@@ -69,6 +71,7 @@ const (
 	stateNewHost
 	stateJoin
 	stateJoinManual
+	stateEditName
 )
 
 // LobbyModel is the Bubble Tea model for the lobby.
@@ -79,11 +82,16 @@ type LobbyModel struct {
 	height   int
 	quitting bool
 
+	// Player name shown to other players. Defaults to $USER, editable
+	// from a dedicated lobby screen.
+	playerName string
+
 	// New-Local / New-Host form state.
-	rule    string     // "sichuan" | "riichi"
-	seats   [4]SeatRole
-	formIdx int        // which field is focused (0=rule, 1=seat1, 2=seat2, 3=seat3, 4=wait, 5=Start)
-	waitS   int        // wait timeout for host (seconds)
+	rule           string // "sichuan" | "riichi"
+	seats          [4]SeatRole
+	formIdx        int    // focused field; layout differs per state — see handleFormKey
+	waitS          int    // wait timeout for host (seconds)
+	hostServerOnly bool   // host: when true, seat 0 is also remote (you join from another terminal)
 
 	// Join state.
 	scanning   bool
@@ -99,11 +107,19 @@ type LobbyModel struct {
 
 // NewLobbyModel returns a fresh LobbyModel with sensible defaults.
 func NewLobbyModel() *LobbyModel {
+	name := os.Getenv("USER")
+	if name == "" {
+		name = os.Getenv("USERNAME") // Windows
+	}
+	if name == "" {
+		name = "Player"
+	}
 	return &LobbyModel{
-		state: stateMain,
-		rule:  "sichuan",
-		seats: [4]SeatRole{SeatHuman, SeatBotEasy, SeatBotEasy, SeatBotEasy},
-		waitS: 30,
+		state:      stateMain,
+		rule:       "sichuan",
+		seats:      [4]SeatRole{SeatHuman, SeatBotEasy, SeatBotEasy, SeatBotEasy},
+		waitS:      30,
+		playerName: name,
 	}
 }
 
@@ -143,6 +159,32 @@ func (m *LobbyModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleJoinKey(msg)
 	case stateJoinManual:
 		return m.handleManualKey(msg)
+	case stateEditName:
+		return m.handleNameKey(msg)
+	}
+	return m, nil
+}
+
+// handleNameKey edits m.playerName via the same character-buffer
+// approach as the manual-IP screen.
+func (m *LobbyModel) handleNameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter":
+		m.state = stateMain
+		m.cursor = 0
+		return m, nil
+	case "backspace":
+		if len(m.playerName) > 0 {
+			m.playerName = m.playerName[:len(m.playerName)-1]
+		}
+		return m, nil
+	}
+	s := msg.String()
+	if len(s) == 1 {
+		c := s[0]
+		if c >= 0x20 && c < 0x7f && len(m.playerName) < 20 {
+			m.playerName += string(c)
+		}
 	}
 	return m, nil
 }
@@ -164,14 +206,14 @@ func (m *LobbyModel) handleManualKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		addr := m.manualAddr
-		// If the user typed "host" without a port, default 7777.
 		if !strings.Contains(addr, ":") {
 			addr = addr + ":7777"
 		}
 		m.Result = LobbyResult{
-			Mode:   LobbyModeJoin,
-			JoinAt: addr,
-			Rule:   "sichuan",
+			Mode:       LobbyModeJoin,
+			JoinAt:     addr,
+			Rule:       "sichuan",
+			PlayerName: m.playerName,
 		}
 		return m, tea.Quit
 	}
@@ -196,6 +238,7 @@ var mainOptions = []struct {
 	{"Host LAN Game (open a room for friends)", stateNewHost},
 	{"Join LAN Game (auto-discover via mDNS)", stateJoin},
 	{"Join by IP address (manual)", stateJoinManual},
+	{"Edit your name", stateEditName},
 }
 
 func (m *LobbyModel) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -223,11 +266,14 @@ func (m *LobbyModel) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.seats = [4]SeatRole{SeatHuman, SeatBotEasy, SeatBotEasy, SeatBotEasy}
 		case stateNewHost:
 			m.seats = [4]SeatRole{SeatHuman, SeatRemote, SeatRemote, SeatRemote}
+			m.hostServerOnly = false
 		case stateJoin:
 			m.scanning = true
 			return m, scanCmd()
 		case stateJoinManual:
 			m.manualAddr = ""
+		case stateEditName:
+			// nothing to init; just enter editing mode
 		}
 	case "q":
 		m.quitting = true
@@ -238,12 +284,21 @@ func (m *LobbyModel) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // ---------------- New game form ----------------
+//
+// Field index layout:
+//   stateNewLocal: 0=Rule, 1-3=Seat1..3, 4=Start              (maxIdx=4)
+//   stateNewHost:  0=Rule, 1=ServerOnly, 2-4=Seat1..3,
+//                  5=Wait, 6=Start                            (maxIdx=6)
+
+func (m *LobbyModel) formMaxIdx() int {
+	if m.state == stateNewHost {
+		return 6
+	}
+	return 4
+}
 
 func (m *LobbyModel) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	maxIdx := 4 // 0=rule, 1..3=seats[1..3] (seat 0 is always You for local; for host: cycle through), wait field for host
-	if m.state == stateNewHost {
-		maxIdx++ // wait timeout
-	}
+	maxIdx := m.formMaxIdx()
 	switch msg.String() {
 	case "esc", "b":
 		m.state = stateMain
@@ -272,63 +327,86 @@ func (m *LobbyModel) handleFormKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *LobbyModel) adjustForm(dir int) {
+	if m.state == stateNewLocal {
+		switch m.formIdx {
+		case 0:
+			m.toggleRule()
+		case 1, 2, 3:
+			m.cycleSeat(m.formIdx, dir, false)
+		}
+		return
+	}
+	// stateNewHost
 	switch m.formIdx {
 	case 0:
-		// rule toggle
-		if m.rule == "sichuan" {
-			m.rule = "riichi"
+		m.toggleRule()
+	case 1:
+		m.hostServerOnly = !m.hostServerOnly
+		if m.hostServerOnly {
+			m.seats[0] = SeatRemote
 		} else {
-			m.rule = "sichuan"
+			m.seats[0] = SeatHuman
 		}
-	case 1, 2, 3:
-		seatIdx := m.formIdx
-		options := []SeatRole{SeatBotEasy, SeatBotMedium, SeatBotHard}
-		if m.state == stateNewHost {
-			options = []SeatRole{SeatRemote, SeatBotEasy, SeatBotMedium, SeatBotHard}
+	case 2, 3, 4:
+		m.cycleSeat(m.formIdx-1, dir, true)
+	case 5:
+		step := 5
+		if dir < 0 {
+			step = -5
 		}
-		curIdx := 0
-		for i, r := range options {
-			if r == m.seats[seatIdx] {
-				curIdx = i
-				break
-			}
+		m.waitS += step
+		if m.waitS < 5 {
+			m.waitS = 5
 		}
-		curIdx = (curIdx + dir + len(options)) % len(options)
-		m.seats[seatIdx] = options[curIdx]
-	case 4:
-		if m.state == stateNewHost {
-			step := 5 * dir
-			if dir > 0 {
-				step = 5
-			} else {
-				step = -5
-			}
-			m.waitS += step
-			if m.waitS < 5 {
-				m.waitS = 5
-			}
-			if m.waitS > 600 {
-				m.waitS = 600
-			}
+		if m.waitS > 600 {
+			m.waitS = 600
 		}
 	}
+}
+
+func (m *LobbyModel) toggleRule() {
+	if m.rule == "sichuan" {
+		m.rule = "riichi"
+	} else {
+		m.rule = "sichuan"
+	}
+}
+
+// cycleSeat advances the role for seats[seatIdx]. host=true allows
+// SeatRemote in the cycle.
+func (m *LobbyModel) cycleSeat(seatIdx, dir int, host bool) {
+	options := []SeatRole{SeatBotEasy, SeatBotMedium, SeatBotHard}
+	if host {
+		options = []SeatRole{SeatRemote, SeatBotEasy, SeatBotMedium, SeatBotHard}
+	}
+	curIdx := 0
+	for i, r := range options {
+		if r == m.seats[seatIdx] {
+			curIdx = i
+			break
+		}
+	}
+	curIdx = (curIdx + dir + len(options)) % len(options)
+	m.seats[seatIdx] = options[curIdx]
 }
 
 func (m *LobbyModel) startGame() {
 	switch m.state {
 	case stateNewLocal:
 		m.Result = LobbyResult{
-			Mode:  LobbyModeLocal,
-			Rule:  m.rule,
-			Seats: m.seats,
+			Mode:       LobbyModeLocal,
+			Rule:       m.rule,
+			Seats:      m.seats,
+			PlayerName: m.playerName,
 		}
 	case stateNewHost:
 		m.Result = LobbyResult{
-			Mode:    LobbyModeHost,
-			Rule:    m.rule,
-			Seats:   m.seats,
-			Wait:    time.Duration(m.waitS) * time.Second,
-			HostBot: m.seats[0] == SeatHuman,
+			Mode:       LobbyModeHost,
+			Rule:       m.rule,
+			Seats:      m.seats,
+			Wait:       time.Duration(m.waitS) * time.Second,
+			HostBot:    !m.hostServerOnly,
+			PlayerName: m.playerName,
 		}
 	}
 }
@@ -358,9 +436,10 @@ func (m *LobbyModel) handleJoinKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.Result = LobbyResult{
-			Mode:   LobbyModeJoin,
-			JoinAt: m.scanResult[m.cursor].Addr,
-			Rule:   "sichuan", // join doesn't know yet; player can pass -rule
+			Mode:       LobbyModeJoin,
+			JoinAt:     m.scanResult[m.cursor].Addr,
+			Rule:       "sichuan",
+			PlayerName: m.playerName,
 		}
 		return m, tea.Quit
 	}
@@ -407,13 +486,19 @@ func (m *LobbyModel) View() string {
 		body = m.viewJoin()
 	case stateJoinManual:
 		body = m.viewJoinManual()
+	case stateEditName:
+		body = m.viewEditName()
 	}
 
 	footer := chromeStyle.Render("ctrl+c = quit  ·  arrows/hjkl = move  ·  enter = select  ·  esc/b = back")
 
+	nameLine := chromeStyle.Render("Your name: ") +
+		lipgloss.NewStyle().Foreground(turnColor).Render(m.playerName)
+
 	return lipgloss.JoinVertical(lipgloss.Center,
 		"",
 		title,
+		nameLine,
 		"",
 		body,
 		"",
@@ -450,10 +535,7 @@ func (m *LobbyModel) viewMain() string {
 }
 
 func (m *LobbyModel) viewForm(title string) string {
-	maxIdx := 4
-	if m.state == stateNewHost {
-		maxIdx = 5
-	}
+	maxIdx := m.formMaxIdx()
 	startLabel := "[ Start ]"
 
 	field := func(idx int, label, value string) string {
@@ -463,19 +545,40 @@ func (m *LobbyModel) viewForm(title string) string {
 			marker = "▸ "
 			val = lipgloss.NewStyle().Foreground(turnColor).Bold(true).Render("‹ " + value + " ›")
 		}
-		return fmt.Sprintf("%s%-12s %s", marker, label+":", val)
+		return fmt.Sprintf("%s%-14s %s", marker, label+":", val)
 	}
 
 	var lines []string
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(title))
 	lines = append(lines, "")
-	lines = append(lines, field(0, "Rule", m.rule))
-	lines = append(lines, field(1, "Seat 1", m.seats[1].String()))
-	lines = append(lines, field(2, "Seat 2", m.seats[2].String()))
-	lines = append(lines, field(3, "Seat 3", m.seats[3].String()))
-	if m.state == stateNewHost {
-		lines = append(lines, field(4, "Wait", fmt.Sprintf("%ds", m.waitS)))
+
+	if m.state == stateNewLocal {
+		lines = append(lines, field(0, "Rule", m.rule))
+		lines = append(lines, field(1, "Seat 1", m.seats[1].String()))
+		lines = append(lines, field(2, "Seat 2", m.seats[2].String()))
+		lines = append(lines, field(3, "Seat 3", m.seats[3].String()))
+		lines = append(lines, "")
+		lines = append(lines, chromeStyle.Render("Seat 0 is YOU. left/right cycle values."))
+	} else {
+		// stateNewHost
+		soVal := "No (you play here)"
+		if m.hostServerOnly {
+			soVal = "Yes (join from another terminal)"
+		}
+		lines = append(lines, field(0, "Rule", m.rule))
+		lines = append(lines, field(1, "Server only", soVal))
+		lines = append(lines, field(2, "Seat 1", m.seats[1].String()))
+		lines = append(lines, field(3, "Seat 2", m.seats[2].String()))
+		lines = append(lines, field(4, "Seat 3", m.seats[3].String()))
+		lines = append(lines, field(5, "Wait", fmt.Sprintf("%ds", m.waitS)))
+		lines = append(lines, "")
+		hint := "Server only = No  → you play seat 0 in this terminal."
+		if m.hostServerOnly {
+			hint = "Server only = Yes → run a separate `rontama` and Join LAN to take seat 0."
+		}
+		lines = append(lines, chromeStyle.Render(hint))
 	}
+
 	lines = append(lines, "")
 	startMarker := "  "
 	if m.formIdx == maxIdx {
@@ -484,8 +587,6 @@ func (m *LobbyModel) viewForm(title string) string {
 	} else {
 		lines = append(lines, startMarker+startLabel)
 	}
-	lines = append(lines, "")
-	lines = append(lines, chromeStyle.Render("Seat 0 is YOU. left/right cycle values."))
 
 	body := strings.Join(lines, "\n")
 	return lipgloss.NewStyle().
@@ -519,6 +620,24 @@ func (m *LobbyModel) viewJoin() string {
 		lines = append(lines, "")
 		lines = append(lines, chromeStyle.Render("enter = connect  ·  r = rescan"))
 	}
+	body := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(chromeColor).
+		Padding(1, 4).
+		Render(body)
+}
+
+func (m *LobbyModel) viewEditName() string {
+	var lines []string
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Edit your name"))
+	lines = append(lines, "")
+	lines = append(lines, chromeStyle.Render("Other players see this in the table panels."))
+	lines = append(lines, "")
+	cursor := lipgloss.NewStyle().Foreground(turnColor).Render("█")
+	lines = append(lines, "  > "+m.playerName+cursor)
+	lines = append(lines, "")
+	lines = append(lines, chromeStyle.Render("enter / esc = save and back  ·  backspace = delete"))
 	body := strings.Join(lines, "\n")
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

@@ -14,6 +14,7 @@ type PlayerState struct {
 	HasWon   bool      // blood-battle: true after first win in this round
 	Score    int       // running cumulative score for the round
 	JustDrew *tile.Tile
+	Name     string // display name (from Player.Name() or remote-supplied)
 }
 
 // State is the full rounds-state visible to the dealer/server.
@@ -140,6 +141,7 @@ func (s *State) View(seat int) PlayerView {
 		v.Discards[i] = s.Discards[i]
 		v.Melds[i] = s.Players[i].Hand.Melds
 		v.Scores[i] = s.Players[i].Score
+		v.Names[i] = s.Players[i].Name
 	}
 	return v
 }

@@ -6,24 +6,23 @@ import (
 )
 
 // Parse converts a short identifier into a Tile.
-// Accepts: "1m".."9m", "1p".."9p", "1s".."9s",
-// honors "E"/"S"/"W"/"N"/"Wh"/"Gr"/"Rd",
-// and CJK aliases "東"/"南"/"西"/"北"/"白"/"發"/"中".
+// Accepts: "1m".."9m", "1p".."9p", "1s".."9s", honors as either
+// CJK ("東/南/西/北/白/發/中") or legacy ASCII ("E/S/W/N/Wh/Gr/Rd").
 func Parse(s string) (Tile, error) {
 	switch s {
-	case "E", "東":
+	case "東", "E":
 		return East, nil
-	case "S", "南":
+	case "南", "S":
 		return South, nil
-	case "W", "西":
+	case "西", "W":
 		return West, nil
-	case "N", "北":
+	case "北", "N":
 		return North, nil
-	case "Wh", "白":
+	case "白", "Wh":
 		return White, nil
-	case "Gr", "發", "发":
+	case "發", "发", "Gr":
 		return Green, nil
-	case "Rd", "中":
+	case "中", "Rd":
 		return Red, nil
 	}
 	if len(s) == 2 {

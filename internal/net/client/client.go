@@ -54,6 +54,12 @@ type Client struct {
 
 // Dial connects to addr and returns a Client.
 func Dial(addr string, decider Decider, log *slog.Logger) (*Client, error) {
+	return DialAs(addr, "", decider, log)
+}
+
+// DialAs connects to addr and registers with the given display name.
+// Empty name → server uses a synthetic 'net-N'.
+func DialAs(addr, name string, decider Decider, log *slog.Logger) (*Client, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -61,13 +67,20 @@ func Dial(addr string, decider Decider, log *slog.Logger) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", addr, err)
 	}
-	return &Client{
+	cli := &Client{
 		conn:    c,
 		enc:     bufio.NewWriter(c),
 		dec:     json.NewDecoder(bufio.NewReader(c)),
 		decider: decider,
 		log:     log,
-	}, nil
+	}
+	if name != "" {
+		// Registration is fire-and-forget; the server reads it right after Hello.
+		if err := cli.send(proto.KindRegister, proto.Register{Name: name}); err != nil {
+			log.Warn("register send failed", "err", err)
+		}
+	}
+	return cli, nil
 }
 
 // Close terminates the connection.

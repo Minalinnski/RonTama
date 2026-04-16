@@ -93,6 +93,7 @@ type PlayerView struct {
 	Discards   [NumPlayers][]tile.Tile
 	Melds      [NumPlayers][]tile.Meld
 	Scores     [NumPlayers]int
+	Names      [NumPlayers]string // display names per seat
 	Round      int
 	TurnsTaken int
 }

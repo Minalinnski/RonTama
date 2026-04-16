@@ -184,6 +184,7 @@ func synthesiseState(upd proto.StateUpdate, rule rules.RuleSet, mySeat int) *gam
 			Dingque: seatPub.Dingque,
 			HasWon:  seatPub.HasWon,
 			Score:   seatPub.Score,
+			Name:    seatPub.Name,
 		}
 		if i == mySeat {
 			ps.Hand.Concealed = upd.OwnHand
