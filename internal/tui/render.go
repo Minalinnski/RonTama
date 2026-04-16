@@ -38,11 +38,22 @@ func suitStyle(t tile.Tile) lipgloss.Style {
 }
 
 // tileFaceStyle returns the style used inside a tile box: the suit
-// foreground on the ivory tile-face background. Centralised so every
-// box uses the same face look.
+// foreground, with a background determined by the active TileStyle.
 func tileFaceStyle(t tile.Tile) lipgloss.Style {
-	return suitStyle(t).Background(tileFaceColor)
+	base := suitStyle(t)
+	switch currentTileStyle {
+	case TileStyleIvory, TileStyleSolid:
+		return base.Background(tileFaceColor)
+	}
+	return base
 }
+
+// currentTileStyle is the globally-active tile render mode. Set by
+// PlayModel on every 's' key press. Package-level to avoid threading
+// a style argument through every render helper; TUI is inherently
+// single-threaded (one tea.Program per process) so contention isn't
+// a concern.
+var currentTileStyle TileStyle = TileStylePlain
 
 // renderTileCompact renders a tile as a colored 2-3 char inline token
 // like "1m" or "東". Used in rivers and melds where space matters.
@@ -72,11 +83,19 @@ func renderTileBox(t tile.Tile, selected bool) string {
 	if selected {
 		bc = selectedColor
 	}
-	return lipgloss.NewStyle().
+	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(bc).
-		Padding(0, 0).
-		Render(body)
+		Padding(0, 0)
+	// Solid style: extend the ivory background over the entire box
+	// (border characters included) to remove the bg/border seam that
+	// looks like a double edge on some terminals.
+	if currentTileStyle == TileStyleSolid {
+		style = style.
+			BorderBackground(tileFaceColor).
+			Background(tileFaceColor)
+	}
+	return style.Render(body)
 }
 
 // padToCols right-pads s with spaces so its visual terminal width is

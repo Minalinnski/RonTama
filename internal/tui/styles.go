@@ -2,6 +2,45 @@ package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+// TileStyle enumerates the visual variants the player can cycle
+// through with the 's' key during play.
+type TileStyle int
+
+const (
+	// TileStylePlain: no background on the tile face, just the
+	// rounded border + coloured character. Most compact and playable
+	// on dark-themed terminals.
+	TileStylePlain TileStyle = iota
+	// TileStyleIvory: ivory tile-face background with coloured ink,
+	// simulating a physical tile. Looks richer but some terminals
+	// render the bg/border transition as a double edge.
+	TileStyleIvory
+	// TileStyleSolid: the ENTIRE box (border included) sits on the
+	// ivory background, so there's no double-edge seam between border
+	// and body. Feels like a "big card".
+	TileStyleSolid
+
+	tileStyleCount
+)
+
+// String for display in the status line.
+func (s TileStyle) String() string {
+	switch s {
+	case TileStylePlain:
+		return "plain"
+	case TileStyleIvory:
+		return "ivory"
+	case TileStyleSolid:
+		return "solid"
+	}
+	return "?"
+}
+
+// Next returns the next style in the cycle.
+func (s TileStyle) Next() TileStyle {
+	return (s + 1) % tileStyleCount
+}
+
 // Color palette: physical-mahjong look — tile faces are white, with
 // ink colours per suit (萬紅 / 筒藍 / 索綠, 風黑, 中紅 / 發綠 / 白灰).
 var (

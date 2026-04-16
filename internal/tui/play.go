@@ -153,6 +153,13 @@ func (m PlayModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	}
+	// 's' cycles the tile display style globally. Works in any state
+	// (main menu / draw / call / round-done) so the player can try
+	// looks without leaving the game.
+	if msg.String() == "s" {
+		currentTileStyle = currentTileStyle.Next()
+		return m, nil
+	}
 	if m.prompt == nil {
 		return m, nil
 	}
@@ -519,6 +526,7 @@ func (m PlayModel) renderHeader() string {
 		fmt.Sprintf("Dealer:%s", seatLabel(st.Dealer)),
 		fmt.Sprintf("Wall:%d", st.Wall.Remaining()),
 		fmt.Sprintf("Turn:%d", st.TurnsTaken),
+		fmt.Sprintf("Style:%s(s)", currentTileStyle),
 	}
 	scores := make([]string, 0, 4)
 	for i := 0; i < game.NumPlayers; i++ {
