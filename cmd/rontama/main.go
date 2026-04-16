@@ -20,13 +20,23 @@ var (
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		runTUI()
+		// No args → launch the lobby. The lobby returns a config; main
+		// dispatches into local play, host, or join based on it.
+		if err := runLobbyFlow(); err != nil {
+			fmt.Fprintln(os.Stderr, "lobby:", err)
+			os.Exit(1)
+		}
 		return
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "tui":
 		runTUI()
+	case "lobby":
+		if err := runLobbyFlow(); err != nil {
+			fmt.Fprintln(os.Stderr, "lobby:", err)
+			os.Exit(1)
+		}
 	case "play":
 		if err := runPlay(rest); err != nil {
 			fmt.Fprintln(os.Stderr, "play:", err)
@@ -69,8 +79,9 @@ func printUsage() {
 	fmt.Fprint(os.Stderr, `rontama - terminal mahjong (Sichuan + Riichi)
 
 Usage:
-  rontama              launch TUI (Phase 0 placeholder)
-  rontama tui          same as above
+  rontama              launch the lobby (新建/开房/加入)
+  rontama lobby        same as above
+  rontama tui          launch the Phase-0 hello placeholder TUI
   rontama play [-v] [-rounds N]
                        run an N-round Sichuan match between 4 Easy bots
   rontama play -tui    interactive 1-round Sichuan: you (seat 0) vs 3 Easy bots

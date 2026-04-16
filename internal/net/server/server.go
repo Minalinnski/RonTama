@@ -41,91 +41,166 @@ type Config struct {
 	Addr        string        // ":7777"
 	JoinTimeout time.Duration // wait this long for clients before filling with bots
 	Log         *slog.Logger
+
+	// Rule overrides the default (sichuan) when set.
+	Rule rules.RuleSet
+
+	// Players: per-seat pre-assigned game.Player. nil entries become
+	// "remote slots" that the server fills from incoming connections.
+	// After JoinTimeout, any still-empty remote slots default to easy.Bot.
+	//
+	// Nil-filled Players (the zero value) is treated as "all remote" —
+	// useful for legacy callers / tests.
+	Players [game.NumPlayers]game.Player
+
+	// ExtraObserver is invoked alongside the always-present multicast
+	// observer. Lets a TUI host see local state changes too.
+	ExtraObserver game.Observer
 }
 
 // Run starts the server and blocks until the round finishes (or ctx is cancelled).
+//
+// Seat plan: cfg.Players seats with non-nil values are used as-is
+// (local human via TUI, local bot, etc.). Nil entries are remote slots
+// that get filled by incoming TCP connections; after JoinTimeout, any
+// still-nil seats fall back to easy.Bot.
 func Run(ctx context.Context, cfg Config) error {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	rule := sichuan.New()
-
-	lc := &net.ListenConfig{}
-	ln, err := lc.Listen(ctx, "tcp", cfg.Addr)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", cfg.Addr, err)
+	rule := cfg.Rule
+	if rule == nil {
+		rule = sichuan.New()
 	}
-	defer ln.Close()
-	cfg.Log.Info("server listening", "addr", ln.Addr())
 
-	conns := make([]net.Conn, 0, game.NumPlayers)
-	connCh := make(chan net.Conn, game.NumPlayers)
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			select {
-			case connCh <- c:
-			default:
-				_ = c.Close() // overflow
-			}
+	// Identify remote slots (nil entries in cfg.Players).
+	remoteSeats := []int{}
+	for i, p := range cfg.Players {
+		if p == nil {
+			remoteSeats = append(remoteSeats, i)
 		}
-	}()
+	}
+
+	var ln net.Listener
+	if len(remoteSeats) > 0 {
+		lc := &net.ListenConfig{}
+		var err error
+		ln, err = lc.Listen(ctx, "tcp", cfg.Addr)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", cfg.Addr, err)
+		}
+		defer ln.Close()
+		cfg.Log.Info("server listening", "addr", ln.Addr(), "remote_seats", remoteSeats)
+	} else {
+		cfg.Log.Info("no remote seats — running pure local game")
+	}
+
+	connCh := make(chan net.Conn, game.NumPlayers)
+	if ln != nil {
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				select {
+				case connCh <- c:
+				default:
+					_ = c.Close()
+				}
+			}
+		}()
+	}
 
 	timeout := cfg.JoinTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	deadline := time.After(timeout)
-	cfg.Log.Info("waiting for joiners", "timeout", timeout)
+	var deadline <-chan time.Time
+	if len(remoteSeats) > 0 {
+		deadline = time.After(timeout)
+		cfg.Log.Info("waiting for joiners", "timeout", timeout, "needed", len(remoteSeats))
+	}
+
+	players := cfg.Players
+	netPlayers := make([]*netPlayer, 0, len(remoteSeats))
+	connected := 0
 
 awaitLoop:
-	for len(conns) < game.NumPlayers {
+	for connected < len(remoteSeats) {
 		select {
 		case c := <-connCh:
-			conns = append(conns, c)
-			cfg.Log.Info("client joined", "seat", len(conns)-1, "remote", c.RemoteAddr())
+			seat := remoteSeats[connected]
+			np := newNetPlayer(c, seat, rule, cfg.Log)
+			netPlayers = append(netPlayers, np)
+			players[seat] = np
+			if err := np.sendHello(); err != nil {
+				cfg.Log.Warn("hello send failed", "seat", seat, "err", err)
+			}
+			connected++
+			cfg.Log.Info("client joined", "seat", seat, "remote", c.RemoteAddr())
 		case <-deadline:
-			cfg.Log.Info("join timeout reached, filling with bots", "seats_taken", len(conns))
+			cfg.Log.Info("join timeout — filling remaining remote seats with Easy bots", "filled", connected, "missing", len(remoteSeats)-connected)
 			break awaitLoop
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-
-	// Build players list. Remote connections become netPlayers; empty seats become Easy bots.
-	var players [game.NumPlayers]game.Player
-	netPlayers := make([]*netPlayer, len(conns))
-	for i, c := range conns {
-		np := newNetPlayer(c, i, rule, cfg.Log)
-		netPlayers[i] = np
-		players[i] = np
-		if err := np.sendHello(); err != nil {
-			cfg.Log.Warn("hello send failed", "seat", i, "err", err)
+	for _, seat := range remoteSeats {
+		if players[seat] == nil {
+			players[seat] = easy.New(fmt.Sprintf("bot-%d", seat))
 		}
 	}
-	for i := len(conns); i < game.NumPlayers; i++ {
-		players[i] = easy.New(fmt.Sprintf("bot-%d", i))
-	}
 
-	// Multicast observer pushes StateUpdate to every remote client.
-	obs := newMulticastObserver(netPlayers)
+	// Combine multicast observer (for remote clients) + ExtraObserver
+	// (e.g. local TUI host).
+	mc := newMulticastObserver(netPlayers)
+	var obs game.Observer = mc
+	if cfg.ExtraObserver != nil {
+		obs = chainObservers(mc, cfg.ExtraObserver)
+	}
 
 	res, err := game.RunRoundWithObserver(rule, players, 0, cfg.Log, obs)
 
-	// Send RoundEnd to every remote client.
 	for _, np := range netPlayers {
-		if np == nil {
-			continue
-		}
 		if sendErr := np.send(proto.KindRoundEnd, proto.RoundEnd{Result: res}); sendErr != nil {
 			cfg.Log.Warn("round_end send failed", "seat", np.seat, "err", sendErr)
 		}
 		_ = np.conn.Close()
 	}
 	return err
+}
+
+// chainObservers composes two observers into one (both fire on every event).
+func chainObservers(a, b game.Observer) game.Observer { return &chainObs{a: a, b: b} }
+
+type chainObs struct{ a, b game.Observer }
+
+func (c *chainObs) OnRoundStart(s *game.State) { c.a.OnRoundStart(s); c.b.OnRoundStart(s) }
+func (c *chainObs) OnExchange3(s *game.State, p [game.NumPlayers][3]tile.Tile, d int) {
+	c.a.OnExchange3(s, p, d)
+	c.b.OnExchange3(s, p, d)
+}
+func (c *chainObs) OnDingque(s *game.State, seat int, suit tile.Suit) {
+	c.a.OnDingque(s, seat, suit)
+	c.b.OnDingque(s, seat, suit)
+}
+func (c *chainObs) OnDraw(s *game.State, seat int, t tile.Tile) {
+	c.a.OnDraw(s, seat, t)
+	c.b.OnDraw(s, seat, t)
+}
+func (c *chainObs) OnDiscard(s *game.State, seat int, t tile.Tile) {
+	c.a.OnDiscard(s, seat, t)
+	c.b.OnDiscard(s, seat, t)
+}
+func (c *chainObs) OnCall(s *game.State, k game.CallKind, seat, from int, t tile.Tile) {
+	c.a.OnCall(s, k, seat, from, t)
+	c.b.OnCall(s, k, seat, from, t)
+}
+func (c *chainObs) OnWin(s *game.State, w game.WinEvent) { c.a.OnWin(s, w); c.b.OnWin(s, w) }
+func (c *chainObs) OnRoundEnd(s *game.State, r *game.RoundResult) {
+	c.a.OnRoundEnd(s, r)
+	c.b.OnRoundEnd(s, r)
 }
 
 // netPlayer is a game.Player backed by a TCP connection.
