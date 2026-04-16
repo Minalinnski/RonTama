@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Minalinnski/RonTama/internal/discovery"
 	"github.com/Minalinnski/RonTama/internal/game"
 	"github.com/Minalinnski/RonTama/internal/rules"
 	"github.com/Minalinnski/RonTama/internal/shanten"
@@ -60,10 +61,11 @@ type RoundDoneMsg struct {
 // JoinUpdateMsg is pushed by the host server during the join phase so
 // the banner shows a live lobby with seat status.
 type JoinUpdateMsg struct {
-	Seats  [4]string // "" = waiting, non-empty = joined name
-	Filled int
-	Total  int
-	Done   bool
+	Seats      [4]string // "" = waiting, non-empty = joined name
+	Filled     int
+	Total      int
+	Done       bool
+	ListenAddr string // "host:port" from the server listener
 }
 
 // PlayModel is the interactive play TUI's Bubble Tea model.
@@ -1095,6 +1097,18 @@ func appendLog(log []string, line string, max int) []string {
 func formatJoinBanner(j JoinUpdateMsg) string {
 	var b strings.Builder
 	b.WriteString("🀄  HOSTING — waiting for players\n\n")
+
+	// Show connection info prominently.
+	addrs := discovery.LocalIPv4Addrs()
+	if len(addrs) > 0 {
+		b.WriteString("  朋友加入方式:\n")
+		b.WriteString("    mDNS: rontama → Join LAN Game（自动发现）\n")
+		for _, a := range addrs {
+			b.WriteString(fmt.Sprintf("    手动: rontama → Join by IP → %s:7777\n", a))
+		}
+		b.WriteString("\n")
+	}
+
 	for i, name := range j.Seats {
 		status := lipgloss.NewStyle().Foreground(dimColor).Render("⏳ waiting...")
 		if name != "" {

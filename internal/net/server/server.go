@@ -73,10 +73,11 @@ type Config struct {
 
 // JoinEvent describes a join-phase state change pushed to JoinChan.
 type JoinEvent struct {
-	Seats  [game.NumPlayers]string // "" = waiting, non-empty = joined name
-	Filled int                     // how many remote seats have been filled
-	Total  int                     // total remote seats expected
-	Done   bool                    // game starting
+	Seats     [game.NumPlayers]string // "" = waiting, non-empty = joined name
+	Filled    int                     // how many remote seats have been filled
+	Total     int                     // total remote seats expected
+	Done      bool                    // game starting
+	ListenAddr string                 // "host:port" for display
 }
 
 // Run starts the server and blocks until the round finishes (or ctx is cancelled).
@@ -162,6 +163,10 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	connected := 0
 
+	listenAddrStr := ""
+	if ln != nil {
+		listenAddrStr = ln.Addr().String()
+	}
 	pushJoinEvent := func(done bool) {
 		if cfg.JoinChan == nil {
 			return
@@ -180,10 +185,11 @@ func Run(ctx context.Context, cfg Config) error {
 			}
 		}
 		cfg.JoinChan <- JoinEvent{
-			Seats:  seats,
-			Filled: connected,
-			Total:  len(remoteSeats),
-			Done:   done,
+			Seats:      seats,
+			Filled:     connected,
+			Total:      len(remoteSeats),
+			Done:       done,
+			ListenAddr: listenAddrStr,
 		}
 	}
 

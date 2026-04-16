@@ -92,10 +92,13 @@ func runLobbyHost(res tui.LobbyResult) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	// Announce via mDNS so joiners can find us.
+	// Announce via mDNS so joiners can auto-discover.
 	if closer, dErr := discovery.Announce("", 7777, []string{"rule=" + res.Rule}); dErr == nil {
 		defer closer.Close()
 		log.Info("mDNS announced", "service", discovery.ServiceType, "port", 7777)
+	} else {
+		// mDNS failed — joiners must use manual IP. Log prominently.
+		log.Warn("mDNS announce FAILED — joiners must use manual IP", "err", dErr)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -127,10 +130,11 @@ func runLobbyHost(res tui.LobbyResult) error {
 	go func() {
 		for ev := range joinCh {
 			prog.Send(tui.JoinUpdateMsg{
-				Seats:  ev.Seats,
-				Filled: ev.Filled,
-				Total:  ev.Total,
-				Done:   ev.Done,
+				Seats:      ev.Seats,
+				Filled:     ev.Filled,
+				Total:      ev.Total,
+				Done:       ev.Done,
+				ListenAddr: ev.ListenAddr,
 			})
 		}
 	}()
