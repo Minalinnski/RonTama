@@ -110,11 +110,12 @@ func runLobbyHost(res tui.LobbyResult) error {
 	defer cancel()
 
 	if !res.HostBot {
-		ln, _ := listenWithFallback(7777)
-		if ln == nil {
-			return fmt.Errorf("could not bind any port")
+		ln, port, err := listenFreePort()
+		if err != nil {
+			return fmt.Errorf("listen: %w", err)
 		}
 		defer ln.Close()
+		_ = port
 		fmt.Fprintf(os.Stderr, "✓ Server listening on :7777\n")
 		players := buildServerSeatsNamed(res, nil, res.PlayerName)
 		cfg := server.Config{
@@ -134,9 +135,9 @@ func runLobbyHost(res tui.LobbyResult) error {
 	//    the NORMAL terminal (not hidden behind alt-screen)
 	// 2. Port :7777 is definitely listening before any client tries
 	// 3. No race condition between server goroutine and TUI startup
-	ln, port := listenWithFallback(7777)
-	if ln == nil {
-		return fmt.Errorf("could not bind any port (7777-7787)")
+	ln, port, err := listenFreePort()
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
 	}
 	defer ln.Close()
 	startCh := make(chan struct{}, 1)
@@ -245,18 +246,16 @@ func playerFromRoleNamed(role tui.SeatRole, seat int, prog *tea.Program, humanNa
 	return nil
 }
 
-// listenWithFallback tries to bind :preferredPort. If it's in use, tries
-// :preferredPort+1 through +10. Returns the listener and actual port,
-// or (nil, 0) if all failed. This prevents "address already in use"
-// crashes when a previous rontama didn't release the port cleanly.
-func listenWithFallback(preferredPort int) (net.Listener, int) {
-	for p := preferredPort; p <= preferredPort+10; p++ {
-		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
-		if err == nil {
-			return ln, p
-		}
+// listenFreePort binds on :0 (OS picks a free port). Always succeeds
+// unless the system is truly out of ports. Returns the listener and
+// the actual assigned port.
+func listenFreePort() (net.Listener, int, error) {
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return nil, 0, err
 	}
-	return nil, 0
+	port := ln.Addr().(*net.TCPAddr).Port
+	return ln, port, nil
 }
 
 // buildLocalRoom creates the initial room for local play (all seats filled).
